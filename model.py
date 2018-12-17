@@ -7,11 +7,9 @@ class SmartModel(nn.Module):
     def __init__(self):
         super(SmartModel,self).__init__()
         self.style_encoder = StyleEncoder(10)
-        self.hacker = Hacker()
         self.unet = UnetGenerator(
                 input_nc = 1,
                 output_nc = 1,
-                unet_hacker = self.hacker,
                 num_downs = 6
                 )
 
@@ -19,17 +17,16 @@ class SmartModel(nn.Module):
         style_imgs = torch.split(style_imgs, 1, 1)
         data = []
         for style_img in style_imgs:
-            data.append(self.style_encoder(style_img).squeeze(2).squeeze(2))
+            data.append(self.style_encoder(style_img))
         data = torch.stack(data,1).mean(1)
-        print(data.shape)
-        self.hacker.last = data
+        style = data
 
         content_imgs = torch.split(content_imgs, 1, 1)
         data = []
         for content_img in content_imgs:
-            data.append(self.unet(content_img))
+            data.append(self.unet(content_img, style))
         data = torch.stack(data,1).mean(1)
-        return content
+        return data
 
 class Hacker(nn.Module):
     def __init__(self):
@@ -45,12 +42,11 @@ class Hacker(nn.Module):
 # at the bottleneck
 class UnetGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, num_downs, ngf=64,
-            unet_hacker = None,
                  norm_layer=nn.BatchNorm2d, use_dropout=False):
         super(UnetGenerator, self).__init__()
 
         # construct unet structure
-        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_hacker, norm_layer=norm_layer, innermost=True)
+        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)
         for i in range(num_downs - 5):
             unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
         unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
@@ -60,8 +56,8 @@ class UnetGenerator(nn.Module):
 
         self.model = unet_block
 
-    def forward(self, input):
-        return self.model(input)
+    def forward(self, input, style):
+        return self.model(input, style)
 
 
 # Defines the submodule with skip connection.
@@ -72,6 +68,7 @@ class UnetSkipConnectionBlock(nn.Module):
                  submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
         super(UnetSkipConnectionBlock, self).__init__()
         self.outermost = outermost
+        self.innermost = innermost
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
@@ -89,36 +86,42 @@ class UnetSkipConnectionBlock(nn.Module):
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
-            down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
-            model = down + [submodule] + up
+            self.up = nn.Sequential(uprelu, upconv, nn.Tanh())
+            self.down = downconv
+            self.mid = submodule
         elif innermost:
-            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
+            upconv = nn.ConvTranspose2d(inner_nc*2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
-            down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
-            model = down + [submodule] + up
+            self.up = nn.Sequential(uprelu, upconv, upnorm)
+            self.down = nn.Sequential(downrelu, downconv)
         else:
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
+            self.down = nn.Sequential(downrelu, downconv, downnorm)
+            self.up = nn.Sequential(uprelu, upconv, upnorm)
+            self.mid = submodule
 
-            if use_dropout:
-                model = down + [submodule] + up + [nn.Dropout(0.5)]
-            else:
-                model = down + [submodule] + up
 
-        self.model = nn.Sequential(*model)
-
-    def forward(self, x):
-        print(x.shape)
+    def forward(self, x, s):
         if self.outermost:
-            return self.model(x)
+            x = self.down(x)
+            x = self.mid(x, s)
+            x = self.up(x)
+            return x
+        elif self.innermost:
+            xx = x
+            x = self.down(x)
+            x = torch.cat([x,s], 1)
+            x = self.up(x)
+            return torch.cat([x, xx], 1)
         else:
-            return torch.cat([x, self.model(x)], 1)
+            xx = x
+            x = self.down(x)
+            x = self.mid(x, s)
+            x = self.up(x)
+            return torch.cat([x, xx], 1)
 
 class StyleEncoder(nn.Module):
     def __init__(self, style_batch):
