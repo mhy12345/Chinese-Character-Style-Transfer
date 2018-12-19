@@ -1,3 +1,3 @@
 dataset/
-raw_data/
+/raw_data
 *.pyc

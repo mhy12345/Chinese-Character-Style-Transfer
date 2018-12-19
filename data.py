@@ -17,13 +17,19 @@ class SimpleDataset:
         self.content_size = self.data.shape[0]
         self.style_size = self.data.shape[1]
         self.sample_size = opt.sample_size
+        logger.info("Content = %d"%self.content_size)
+        logger.info("Style = %d"%self.style_size)
+        logger.info("Sample = %d"%self.sample_size)
         logger.info('Initialize finish.')
+
     def __len__(self):
         return self.content_size * self.style_size
+        #return 246
 
     def __getitem__(self, idx):
         idx1 = idx // self.style_size
         idx2 = idx %  self.style_size
+        idx2 = 1
         idxs_1 = [random.randint(0,self.style_size-1) for i in range(self.sample_size)]
         idxs_2 = [random.randint(0,self.content_size-1) for i in range(self.sample_size)]
         return (
