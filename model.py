@@ -12,7 +12,7 @@ class SmartModel(nn.Module):
         self.unet = UnetGenerator(
                 input_nc = 1,
                 output_nc = 1,
-                use_style = False,
+                use_style = True,
                 num_downs = 6
                 )
         self.final = UnetGenerator(
@@ -30,7 +30,6 @@ class SmartModel(nn.Module):
             data.append(self.style_encoder(style_img))
         data = torch.stack(data,1).mean(1)
         style = data
-
         content_imgs = self.input_norm(content_imgs)
         content_imgs = torch.split(content_imgs, 1, 1)
         data = []
@@ -46,7 +45,7 @@ class SmartModel(nn.Module):
 # if |num_downs| == 7, image of size 128x128 will become of size 1x1
 # at the bottleneck
 class UnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, num_downs, ngf=16,
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64,
             use_style = False,
                  norm_layer=nn.BatchNorm2d, use_dropout=False):
         super(UnetGenerator, self).__init__()
@@ -130,7 +129,7 @@ class UnetSkipConnectionBlock(nn.Module):
             x = self.down(x)
             x = self.mid(x, s)
             x = self.up(x)
-            return torch.cat([xx, torch.rand_like(x)], 1)
+            return torch.cat([xx, x], 1)
 
 class StyleEncoder(nn.Module):
     def __init__(self, style_batch):
@@ -167,7 +166,6 @@ class StyleEncoder(nn.Module):
         x = F.leaky_relu(self.bn5(self.conv5(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn6(self.conv6(x)), negative_slope=0.2)
         output = F.leaky_relu(self.bn7(self.conv7(x)), negative_slope=0.2)
-
         return output
 
 def init_weights(net, init_type='normal', gain=0.02):
