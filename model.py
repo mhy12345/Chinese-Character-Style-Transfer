@@ -94,16 +94,16 @@ class SmartModel(nn.Module):
 class DModel(nn.Module):
     def __init__(self):
         super(DModel, self).__init__()
-        self.style_encoder = StyleEncoder(10) #Encoder the style images into a embed vector 
+        self.style_encoder = StyleEncoder(1) #Encoder the style images into a embed vector 
         self.unet_text = UnetGenerator(
                 input_nc = 1,
-                output_nc = 1,
-                use_style = False,
+                output_nc = 4,
+                use_style = True,
                 num_downs = 6
                 )
         self.unet = UnetGenerator(
-                input_nc = 11,
-                output_nc = 1,
+                input_nc = 5,
+                output_nc = 10,
                 use_style = True,
                 num_downs = 6
                 )
@@ -113,7 +113,7 @@ class DModel(nn.Module):
                 use_style = False,
                 num_downs = 6
                 )
-        self.dnet = StyleEncoder(1)
+        self.dnet = StyleEncoder(10)
         self.linear = nn.Linear(512,1)
 
     def forward(self, target_imgs, style_imgs, content_imgs):
@@ -128,10 +128,16 @@ class DModel(nn.Module):
         content_imgs = torch.split(content_imgs, 1, 1)
         data = []
         for content_img in content_imgs:
-            data.append(self.unet_text(content_img, False))
-        data = torch.stack(data,1).squeeze(2)
-        text = torch.sigmoid(data)
+            tmp = self.unet_text(content_img, style)
+            tmp = torch.cat([tmp, target_imgs], 1)
+            tmp = self.unet(tmp, style)
+            tmp = self.dnet(tmp).squeeze(-1).squeeze(-1)
+            tmp = self.linear(tmp)
+            data.append(tmp)
+        data = torch.stack(data,1).mean(1)
+        data = torch.sigmoid(data)
 
+        '''
         target_imgs = torch.split(target_imgs, 1, 1)
         data = []
         for target_img in target_imgs:
@@ -142,12 +148,13 @@ class DModel(nn.Module):
             data.append(tmp)
         data = torch.stack(data,1)
         data = torch.sigmoid(data)
+        '''
         return data
 
 class GModel(nn.Module):
     def __init__(self):
         super(GModel,self).__init__()
-        self.style_encoder = StyleEncoder(10)
+        self.style_encoder = StyleEncoder(1)
         self.unet = UnetGenerator(
                 input_nc = 1,
                 output_nc = 1,
@@ -274,9 +281,9 @@ class UnetSkipConnectionBlock(nn.Module):
             return torch.cat([xx, x], 1)
 
 class StyleEncoder(nn.Module):
-    def __init__(self, style_batch):
+    def __init__(self, in_channels):
         super(StyleEncoder, self).__init__()
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=2, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=5, stride=1, padding=2, bias=False)
         self.bn1 = nn.InstanceNorm2d(64)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
         self.bn2 = nn.InstanceNorm2d(128)
