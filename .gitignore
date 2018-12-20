@@ -1,3 +1,4 @@
 dataset/
 /raw_data
 *.pyc
+.*.swp

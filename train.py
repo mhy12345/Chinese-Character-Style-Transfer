@@ -16,8 +16,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='./dataset/image_100x100x64x64_stand.npy')
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--learn_rate', type=float, default=1e-4)
+parser.add_argument('--batch_size', type=int, default=10)
+parser.add_argument('--learn_rate', type=float, default=1e-2)
 args = parser.parse_args()
 
 dataset = SimpleDataset()
@@ -26,27 +26,29 @@ data_loader = torch.utils.data.DataLoader(
         dataset = dataset,
         batch_size = args.batch_size,
         shuffle=True,
-        num_workers = 1)
+        num_workers = 3)
 
-model = SmartModel().cuda()
-optimizer = optim.Adam(model.parameters(), lr=args.learn_rate)
+model = SmartModel()
+model.initialize(args)
+model = model.cuda()
 
+
+rec = []
 for epoch in range(2000):
     for i,(content_imgs, style_imgs, target) in enumerate(data_loader):
         content_imgs = content_imgs.cuda()
         style_imgs = style_imgs.cuda()
         target = target.cuda()
-        pred = model(content_imgs, style_imgs)
-        assert(pred.shape == target.shape)
-        loss = (pred - target).abs().mean()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        model.set_input(content_imgs, style_imgs, target)
+        model.optimize_parameters()
+        pred = model.fake_img
         _pred = pred[0].cpu().detach().numpy()
-        #print(np.isnan(_pred).astype(np.float32).mean())
-        #print((_pred>=0).astype(np.float32).mean())
+
+        if i%100 == 0:
+            rec.append(_pred)
         vis.image(pred[0].cpu().detach().numpy(), win=1)
         vis.image(target[0].cpu().detach().numpy(), win=2)
         vis.images(content_imgs[0].unsqueeze(1).cpu().detach().numpy(), win=3)
         vis.images(style_imgs[0].unsqueeze(1).cpu().detach().numpy(), win=4)
-        print(i, loss.cpu())
+        vis.images(np.array(rec), win=5)
+        print("D=",model.loss_D,"G=", model.loss_G)

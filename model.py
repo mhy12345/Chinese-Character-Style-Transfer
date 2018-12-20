@@ -2,15 +2,98 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
+import random
 import functools
 
 class SmartModel(nn.Module):
     def __init__(self):
-        super(SmartModel,self).__init__()
+        super(SmartModel, self).__init__()
+
+    def initialize(self, opt):
+        self.netG = GModel()
+        self.netD = DModel()
+        self.fake_img_pool = ImagePool(50)
+
+        self.criterionGAN = GANLoss(False)
+        self.criterionL1 = torch.nn.L1Loss()
+
+        self.optimizer_G = torch.optim.Adam(self.netG.parameters(),
+                                            lr=opt.learn_rate, betas=(.5, 0.999))
+        self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
+                                            lr=opt.learn_rate, betas=(.5, 0.999))
+
+        init_net(self)
+
+    def set_input(self, content_imgs, style_imgs, target_img):
+        self.input_c = content_imgs
+        self.input_s = style_imgs
+        self.real_img = target_img.unsqueeze(1)
+
+    def forward(self):
+        self.fake_img = self.netG(self.input_c, self.input_s)
+
+    def backward_D(self):
+        #fake_all = torch.cat((self.input_c, self.fake_img), 1)
+        fake_all = self.fake_img
+        fake_all = self.fake_img_pool.query(fake_all)
+        pred_fake = self.netD(fake_all.detach(), self.input_s, self.input_c)
+        self.loss_D_fake = self.criterionGAN(pred_fake, False)
+        #real_all = torch.cat((self.input_s, self.real_img), 1)
+        real_all = self.real_img
+        pred_real = self.netD(real_all.detach(), self.input_s, self.input_c)
+        self.loss_D_real = self.criterionGAN(pred_real, True)
+        self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
+        self.loss_D.backward()
+
+
+    def backward_G(self):
+        #fake_all = torch.cat((self.input_c, self.fake_img), 1)
+        fake_all = self.fake_img
+        pred_fake = self.netD(fake_all, self.input_s, self.input_c)
+        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+
+        # Second, G(A) = B
+        self.loss_G_L1 = self.criterionL1(self.fake_img, self.real_img) * .05
+
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1
+        self.loss_G.backward()
+
+    def optimize_parameters(self):
+        self.forward()
+        # update D
+        self.set_requires_grad(self.netD, True)
+        self.optimizer_D.zero_grad()
+        self.backward_D()
+        self.optimizer_D.step()
+
+        # update G
+        self.set_requires_grad(self.netD, False)
+        self.optimizer_G.zero_grad()
+        self.backward_G()
+        self.optimizer_G.step()
+
+    def set_requires_grad(self, nets, requires_grad=False):
+        if not isinstance(nets, list):
+            nets = [nets]
+        for net in nets:
+            if net is not None:
+                for param in net.parameters():
+                    param.requires_grad = requires_grad
+
+class DModel(nn.Module):
+    def __init__(self):
+        super(DModel, self).__init__()
         self.style_encoder = StyleEncoder(10)
+        #self.text_encoder = StyleEncoder(10)
         self.input_norm = nn.BatchNorm2d(10)
-        self.unet = UnetGenerator(
+        self.unet_text = UnetGenerator(
                 input_nc = 1,
+                output_nc = 1,
+                use_style = False,
+                num_downs = 6
+                )
+        self.unet = UnetGenerator(
+                input_nc = 11,
                 output_nc = 1,
                 use_style = True,
                 num_downs = 6
@@ -21,23 +104,76 @@ class SmartModel(nn.Module):
                 use_style = False,
                 num_downs = 6
                 )
-        init_net(self)
+        self.dnet = StyleEncoder(1)
+        self.linear = nn.Linear(512,1)
+        self.mix = nn.Bilinear(512,512,512, bias=False)
+
+    def forward(self, target_imgs, style_imgs, content_imgs):
+        style_imgs = torch.split(style_imgs, 1, 1)
+        data = []
+        for style_img in style_imgs:
+            data.append(self.style_encoder(style_img))
+        data = torch.stack(data,1).mean(1)
+        style = data.squeeze(-1).squeeze(-1)
+
+        content_imgs = torch.split(content_imgs, 1, 1)
+        data = []
+        for content_img in content_imgs:
+            data.append(self.unet_text(content_img, False))
+        data = torch.stack(data,1).squeeze(2)
+        text = data
+
+        target_imgs = torch.split(target_imgs, 1, 1)
+        data = []
+        for target_img in target_imgs:
+            tmp = torch.cat([target_img, text], 1)
+            tmp = self.unet(tmp, style)
+            tmp = self.dnet(tmp).squeeze(-1).squeeze(-1)
+            tmp = self.linear(tmp)
+            data.append(tmp)
+        data = torch.stack(data,1)
+        data = torch.sigmoid(data)
+        return data
+
+class GModel(nn.Module):
+    def __init__(self):
+        super(GModel,self).__init__()
+        self.style_encoder = StyleEncoder(10)
+        self.input_norm = nn.BatchNorm2d(10)
+        self.unet = UnetGenerator(
+                input_nc = 1,
+                output_nc = 1,
+                use_style = True,
+                num_downs = 6
+                )
+        self.style_mem = nn.GRU(512,256,2,batch_first=True,bidirectional=True)
+        self.final = UnetGenerator(
+                input_nc = 10,
+                output_nc = 1,
+                use_style = False,
+                num_downs = 6
+                )
 
     def forward(self, content_imgs, style_imgs):
         style_imgs = torch.split(style_imgs, 1, 1)
         data = []
         for style_img in style_imgs:
             data.append(self.style_encoder(style_img))
-        data = torch.stack(data,1).mean(1)
+        data = torch.stack(data,1).squeeze(-1).squeeze(-1)
+        '''
+        Simply use mean() to reduce data 
+        data = data.mean(1)
+        '''
+        data = self.style_mem(data)[0].mean(1)
         style = data
-        content_imgs = self.input_norm(content_imgs)
+        #content_imgs = self.input_norm(content_imgs)
         content_imgs = torch.split(content_imgs, 1, 1)
         data = []
         for content_img in content_imgs:
             data.append(self.unet(content_img, style))
         data = torch.stack(data,1).squeeze(2)
         data = self.final(data, None)*.5+.5
-        return data.squeeze(1)
+        return data
 
 
 # Defines the Unet generator.
@@ -46,7 +182,7 @@ class SmartModel(nn.Module):
 # at the bottleneck
 class UnetGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, num_downs, ngf=64,
-            use_style = False,
+                    use_style = False,
                  norm_layer=nn.BatchNorm2d, use_dropout=False):
         super(UnetGenerator, self).__init__()
 
@@ -82,7 +218,6 @@ class UnetSkipConnectionBlock(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
         if input_nc is None:
             input_nc = outer_nc
-        print("USE_BIAS: ",use_bias)
         downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
                              stride=2, padding=1, bias=use_bias)
         downrelu = nn.LeakyReLU(0.2, True)
@@ -122,7 +257,7 @@ class UnetSkipConnectionBlock(nn.Module):
         elif self.innermost:
             x = self.down(x)
             if self.use_style:
-                x = torch.cat([x,s], 1)
+                x = torch.cat([x,s.unsqueeze(-1).unsqueeze(-1)], 1)
             x = self.up(x)
             return torch.cat([x, xx], 1)
         else:
@@ -165,7 +300,7 @@ class StyleEncoder(nn.Module):
         x = F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn5(self.conv5(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn6(self.conv6(x)), negative_slope=0.2)
-        output = F.leaky_relu(self.bn7(self.conv7(x)), negative_slope=0.2)
+        output = F.tanh(self.bn7(self.conv7(x)))
         return output
 
 def init_weights(net, init_type='normal', gain=0.02):
@@ -199,3 +334,53 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
         net = torch.nn.DataParallel(net, gpu_ids)
     init_weights(net, init_type, gain=init_gain)
     return net
+
+class GANLoss(nn.Module):
+    def __init__(self, use_lsgan=True, target_real_label=1.0, target_fake_label=0.0):
+        super(GANLoss, self).__init__()
+        self.register_buffer('real_label', torch.tensor(target_real_label))
+        self.register_buffer('fake_label', torch.tensor(target_fake_label))
+        if use_lsgan:
+            self.loss = nn.MSELoss()
+        else:
+            self.loss = nn.BCELoss()
+
+    def get_target_tensor(self, input, target_is_real):
+        if target_is_real:
+            target_tensor = self.real_label
+        else:
+            target_tensor = self.fake_label
+        return target_tensor.expand_as(input)
+
+    def __call__(self, input, target_is_real):
+        target_tensor = self.get_target_tensor(input, target_is_real)
+        return self.loss(input, target_tensor)
+
+class ImagePool():
+    def __init__(self, pool_size):
+        self.pool_size = pool_size
+        if self.pool_size > 0:
+            self.num_imgs = 0
+            self.images = []
+
+    def query(self, images):
+        if self.pool_size == 0:
+            return images
+        return_images = []
+        for image in images:
+            image = torch.unsqueeze(image.data, 0)
+            if self.num_imgs < self.pool_size:
+                self.num_imgs = self.num_imgs + 1
+                self.images.append(image)
+                return_images.append(image)
+            else:
+                p = random.uniform(0, 1)
+                if p > 0.5:
+                    random_id = random.randint(0, self.pool_size - 1)  # randint is inclusive
+                    tmp = self.images[random_id].clone()
+                    self.images[random_id] = image
+                    return_images.append(tmp)
+                else:
+                    return_images.append(image)
+        return_images = torch.cat(return_images, 0)
+        return return_images

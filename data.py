@@ -29,10 +29,9 @@ class SimpleDataset:
     def __getitem__(self, idx):
         idx1 = idx // self.style_size
         idx2 = idx %  self.style_size
-        idx2 = 1
         idxs_1 = [random.randint(0,self.style_size-1) for i in range(self.sample_size)]
         idxs_2 = [random.randint(0,self.content_size-1) for i in range(self.sample_size)]
         return (
                 self.data[idx1,idxs_1,:,:],
                 self.data[idxs_2,idx2,:,:],
-                self.data[idx1,idx2,:,:])
+                self.data[idx1,1,:,:])
