@@ -17,7 +17,9 @@ parser.add_argument('--dataset', type=str, default='./dataset/image_100x100x64x6
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=10)
-parser.add_argument('--learn_rate', type=float, default=1e-2)
+parser.add_argument('--learn_rate', type=float, default=5*1e-4)
+parser.add_argument('--pool_size', type=int, default=50)
+parser.add_argument('--use_lsgan', type=bool, default=False)
 args = parser.parse_args()
 
 dataset = SimpleDataset()
@@ -46,9 +48,9 @@ for epoch in range(2000):
 
         if i%100 == 0:
             rec.append(_pred)
+            vis.images(np.array(rec), win=5)
         vis.image(pred[0].cpu().detach().numpy(), win=1)
         vis.image(target[0].cpu().detach().numpy(), win=2)
         vis.images(content_imgs[0].unsqueeze(1).cpu().detach().numpy(), win=3)
         vis.images(style_imgs[0].unsqueeze(1).cpu().detach().numpy(), win=4)
-        vis.images(np.array(rec), win=5)
-        print("D=",model.loss_D,"G=", model.loss_G)
+        print("D=",model.loss_D_fake, model.loss_D_real,"G=", model.loss_G)

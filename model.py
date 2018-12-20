@@ -5,16 +5,26 @@ from torch.nn import init
 import random
 import functools
 
+import visdom
+import numpy as np
+vis = visdom.Visdom(env='model')
+
 class SmartModel(nn.Module):
+    '''
+    GAN & Pix2Pix
+    '''
     def __init__(self):
         super(SmartModel, self).__init__()
 
     def initialize(self, opt):
+        '''
+        Define the model structure.
+        '''
         self.netG = GModel()
         self.netD = DModel()
-        self.fake_img_pool = ImagePool(50)
+        self.fake_img_pool = ImagePool(opt.pool_size)
 
-        self.criterionGAN = GANLoss(False)
+        self.criterionGAN = GANLoss(opt.use_lsgan)
         self.criterionL1 = torch.nn.L1Loss()
 
         self.optimizer_G = torch.optim.Adam(self.netG.parameters(),
@@ -33,26 +43,27 @@ class SmartModel(nn.Module):
         self.fake_img = self.netG(self.input_c, self.input_s)
 
     def backward_D(self):
-        #fake_all = torch.cat((self.input_c, self.fake_img), 1)
         fake_all = self.fake_img
+        vis.image(self.fake_img[0].cpu().detach().numpy(), win=1)
+        vis.image(self.real_img[0].cpu().detach().numpy(), win=2)
         fake_all = self.fake_img_pool.query(fake_all)
         pred_fake = self.netD(fake_all.detach(), self.input_s, self.input_c)
+        #print("PRED_FAKE", pred_fake)
         self.loss_D_fake = self.criterionGAN(pred_fake, False)
-        #real_all = torch.cat((self.input_s, self.real_img), 1)
+
         real_all = self.real_img
         pred_real = self.netD(real_all.detach(), self.input_s, self.input_c)
+        #print("PRED_REAL", pred_real)
         self.loss_D_real = self.criterionGAN(pred_real, True)
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         self.loss_D.backward()
 
 
     def backward_G(self):
-        #fake_all = torch.cat((self.input_c, self.fake_img), 1)
         fake_all = self.fake_img
         pred_fake = self.netD(fake_all, self.input_s, self.input_c)
         self.loss_G_GAN = self.criterionGAN(pred_fake, True)
 
-        # Second, G(A) = B
         self.loss_G_L1 = self.criterionL1(self.fake_img, self.real_img) * .05
 
         self.loss_G = self.loss_G_GAN + self.loss_G_L1
@@ -83,9 +94,7 @@ class SmartModel(nn.Module):
 class DModel(nn.Module):
     def __init__(self):
         super(DModel, self).__init__()
-        self.style_encoder = StyleEncoder(10)
-        #self.text_encoder = StyleEncoder(10)
-        self.input_norm = nn.BatchNorm2d(10)
+        self.style_encoder = StyleEncoder(10) #Encoder the style images into a embed vector 
         self.unet_text = UnetGenerator(
                 input_nc = 1,
                 output_nc = 1,
@@ -106,9 +115,9 @@ class DModel(nn.Module):
                 )
         self.dnet = StyleEncoder(1)
         self.linear = nn.Linear(512,1)
-        self.mix = nn.Bilinear(512,512,512, bias=False)
 
     def forward(self, target_imgs, style_imgs, content_imgs):
+        assert(target_imgs.shape[1] == 1)
         style_imgs = torch.split(style_imgs, 1, 1)
         data = []
         for style_img in style_imgs:
@@ -121,7 +130,7 @@ class DModel(nn.Module):
         for content_img in content_imgs:
             data.append(self.unet_text(content_img, False))
         data = torch.stack(data,1).squeeze(2)
-        text = data
+        text = torch.sigmoid(data)
 
         target_imgs = torch.split(target_imgs, 1, 1)
         data = []
@@ -139,7 +148,6 @@ class GModel(nn.Module):
     def __init__(self):
         super(GModel,self).__init__()
         self.style_encoder = StyleEncoder(10)
-        self.input_norm = nn.BatchNorm2d(10)
         self.unet = UnetGenerator(
                 input_nc = 1,
                 output_nc = 1,
@@ -166,7 +174,6 @@ class GModel(nn.Module):
         '''
         data = self.style_mem(data)[0].mean(1)
         style = data
-        #content_imgs = self.input_norm(content_imgs)
         content_imgs = torch.split(content_imgs, 1, 1)
         data = []
         for content_img in content_imgs:
@@ -183,7 +190,7 @@ class GModel(nn.Module):
 class UnetGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, num_downs, ngf=64,
                     use_style = False,
-                 norm_layer=nn.BatchNorm2d, use_dropout=False):
+                 norm_layer=nn.InstanceNorm2d, use_dropout=False):
         super(UnetGenerator, self).__init__()
 
         # construct unet structure
@@ -270,19 +277,19 @@ class StyleEncoder(nn.Module):
     def __init__(self, style_batch):
         super(StyleEncoder, self).__init__()
         self.conv1 = nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=2, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.bn1 = nn.InstanceNorm2d(64)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(128)
+        self.bn2 = nn.InstanceNorm2d(128)
         self.conv3 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.bn3 = nn.InstanceNorm2d(256)
         self.conv4 = nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn4 = nn.BatchNorm2d(512)
+        self.bn4 = nn.InstanceNorm2d(512)
         self.conv5 = nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn5 = nn.BatchNorm2d(512)
+        self.bn5 = nn.InstanceNorm2d(512)
         self.conv6 = nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn6 = nn.BatchNorm2d(512)
+        self.bn6 = nn.InstanceNorm2d(512)
         self.conv7 = nn.Conv2d(512, 512, kernel_size=2, stride=2, padding=0, bias=False)
-        self.bn7 = nn.BatchNorm2d(512)
+        self.bn7 = nn.InstanceNorm2d(512)
         self.weight_init()
 
     def weight_init(self):
@@ -300,7 +307,7 @@ class StyleEncoder(nn.Module):
         x = F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn5(self.conv5(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn6(self.conv6(x)), negative_slope=0.2)
-        output = F.tanh(self.bn7(self.conv7(x)))
+        output = self.conv7(x)
         return output
 
 def init_weights(net, init_type='normal', gain=0.02):

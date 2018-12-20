@@ -24,7 +24,6 @@ class SimpleDataset:
 
     def __len__(self):
         return self.content_size * self.style_size
-        #return 246
 
     def __getitem__(self, idx):
         idx1 = idx // self.style_size
@@ -34,4 +33,4 @@ class SimpleDataset:
         return (
                 self.data[idx1,idxs_1,:,:],
                 self.data[idxs_2,idx2,:,:],
-                self.data[idx1,1,:,:])
+                self.data[idx1,idx2,:,:])
