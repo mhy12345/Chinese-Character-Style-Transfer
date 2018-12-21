@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
 import random
+import itertools
 import functools
 
 import visdom
@@ -20,6 +21,8 @@ class SmartModel(nn.Module):
         '''
         Define the model structure.
         '''
+        self.netS_G = SModel()
+        self.netS_D = SModel()
         self.netG = GModel()
         self.netD = DModel()
         self.fake_img_pool = ImagePool(opt.pool_size)
@@ -27,58 +30,77 @@ class SmartModel(nn.Module):
         self.criterionGAN = GANLoss(opt.use_lsgan)
         self.criterionL1 = torch.nn.L1Loss()
 
-        self.optimizer_G = torch.optim.Adam(self.netG.parameters(),
+        self.optimizer_G = torch.optim.Adam(
+                itertools.chain(self.netG.parameters(), self.netS_G.parameters()),
                                             lr=opt.learn_rate, betas=(.5, 0.999))
-        self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
+        self.optimizer_D = torch.optim.Adam(
+                itertools.chain(self.netD.parameters(), self.netS_D.parameters()),
                                             lr=opt.learn_rate, betas=(.5, 0.999))
 
         init_net(self)
 
-    def set_input(self, content_imgs, style_imgs, target_img):
-        self.input_c = content_imgs
-        self.input_s = style_imgs
-        self.real_img = target_img.unsqueeze(1)
+    def set_input(self, imgs_A, imgs_B):
+        self.real_A = imgs_A
+        self.real_B = imgs_B
 
     def forward(self):
-        self.fake_img = self.netG(self.input_c, self.input_s)
+        self.style_A_G = self.netS_G(self.real_A).mean(1)
+        self.style_B_G = self.netS_G(self.real_B).mean(1)
+        self.style_A_D = self.netS_D(self.real_A).mean(1)
+        self.style_B_D = self.netS_D(self.real_B).mean(1)
+        self.fake_B = self.netG(self.real_A, self.style_B_G)
+        self.fake_A = self.netG(self.real_B, self.style_A_G)
 
     def backward_D(self):
-        fake_all = self.fake_img
-        vis.image(self.fake_img[0].cpu().detach().numpy(), win=1)
-        vis.image(self.real_img[0].cpu().detach().numpy(), win=2)
-        fake_all = self.fake_img_pool.query(fake_all)
-        pred_fake = self.netD(fake_all.detach(), self.input_s, self.input_c)
-        #print("PRED_FAKE", pred_fake)
-        self.loss_D_fake = self.criterionGAN(pred_fake, False)
+        fake_all_A = torch.cat([self.fake_A, self.real_B], 1)
+        fake_all_B = torch.cat([self.fake_B, self.real_A], 1)
+        real_all_A = self.real_A
+        real_all_B = self.real_B
+        pred_fake_A = self.netD(fake_all_A.detach(), self.style_A_D)
+        pred_fake_B = self.netD(fake_all_B.detach(), self.style_B_D)
+        self.loss_A_fake = self.criterionGAN(pred_fake_A, False)
+        self.loss_B_fake = self.criterionGAN(pred_fake_B, False)
 
-        real_all = self.real_img
-        pred_real = self.netD(real_all.detach(), self.input_s, self.input_c)
-        #print("PRED_REAL", pred_real)
-        self.loss_D_real = self.criterionGAN(pred_real, True)
-        self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
+        pred_real_A = self.netD(real_all_A.detach(), self.style_A_D)
+        pred_real_B = self.netD(real_all_B.detach(), self.style_B_D)
+        self.loss_A_real = self.criterionGAN(pred_real_A, True)
+        self.loss_B_real = self.criterionGAN(pred_real_B, True)
+        self.loss_D = (self.loss_A_fake + self.loss_B_fake + self.loss_A_real + self.loss_B_real) * 0.25
         self.loss_D.backward()
 
 
     def backward_G(self):
-        fake_all = self.fake_img
-        pred_fake = self.netD(fake_all, self.input_s, self.input_c)
-        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+        fake_all_A = torch.cat([self.fake_A, self.real_B], 1)
+        fake_all_B = torch.cat([self.fake_B, self.real_A], 1)
+        real_all_A = self.real_A
+        real_all_B = self.real_B
+        pred_fake_A = self.netD(fake_all_A, self.style_A_G)
+        pred_fake_B = self.netD(fake_all_B, self.style_B_G)
+        self.loss_A_fake = self.criterionGAN(pred_fake_A, False)
+        self.loss_B_fake = self.criterionGAN(pred_fake_B, False)
+        self.loss_G_GAN = self.criterionGAN(pred_fake_A, True) + self.criterionGAN(pred_fake_B, True)
 
-        self.loss_G_L1 = self.criterionL1(self.fake_img, self.real_img) * .05
+        #self.loss_G_L1 = self.criterionL1(self.fake_img, self.real_img) * .05
 
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1
+        self.loss_G = self.loss_G_GAN # + self.loss_G_L1 
         self.loss_G.backward()
 
     def optimize_parameters(self):
-        self.forward()
-        # update D
+        choice = random.randint(0,1)
         self.set_requires_grad(self.netD, True)
+        self.set_requires_grad(self.netS_D, True)
+        self.set_requires_grad(self.netG, False)
+        self.set_requires_grad(self.netS_G, False)
+        self.forward()
         self.optimizer_D.zero_grad()
         self.backward_D()
         self.optimizer_D.step()
 
-        # update G
         self.set_requires_grad(self.netD, False)
+        self.set_requires_grad(self.netS_D, False)
+        self.set_requires_grad(self.netG, True)
+        self.set_requires_grad(self.netS_G, True)
+        self.forward()
         self.optimizer_G.zero_grad()
         self.backward_G()
         self.optimizer_G.step()
@@ -91,111 +113,66 @@ class SmartModel(nn.Module):
                 for param in net.parameters():
                     param.requires_grad = requires_grad
 
+class SModel(nn.Module):
+    def __init__(self):
+        super(SModel, self).__init__()
+        self.dnet = StyleEncoder(1)
+
+    def forward(self, imgs):
+        bs, tot, w, h = imgs.shape
+        data = torch.reshape(imgs, (bs*tot, 1, w, h))
+        data = self.dnet(data)
+        data = torch.reshape(data, (bs, tot, 128))
+        return data
+
 class DModel(nn.Module):
     def __init__(self):
         super(DModel, self).__init__()
-        self.style_encoder = StyleEncoder(1) #Encoder the style images into a embed vector 
-        self.unet_text = UnetGenerator(
-                input_nc = 1,
-                output_nc = 4,
-                use_style = True,
-                num_downs = 6
-                )
         self.unet = UnetGenerator(
-                input_nc = 5,
+                input_nc = 1,
                 output_nc = 10,
                 use_style = True,
                 num_downs = 6
                 )
-        self.final = UnetGenerator(
-                input_nc = 10,
-                output_nc = 1,
-                use_style = False,
-                num_downs = 6
-                )
         self.dnet = StyleEncoder(10)
-        self.linear = nn.Linear(512,1)
+        self.linear = nn.Linear(128,1)
 
-    def forward(self, target_imgs, style_imgs, content_imgs):
-        assert(target_imgs.shape[1] == 1)
-        style_imgs = torch.split(style_imgs, 1, 1)
-        data = []
-        for style_img in style_imgs:
-            data.append(self.style_encoder(style_img))
-        data = torch.stack(data,1).mean(1)
-        style = data.squeeze(-1).squeeze(-1)
-
-        content_imgs = torch.split(content_imgs, 1, 1)
-        data = []
-        for content_img in content_imgs:
-            tmp = self.unet_text(content_img, style)
-            tmp = torch.cat([tmp, target_imgs], 1)
-            tmp = self.unet(tmp, style)
-            tmp = self.dnet(tmp).squeeze(-1).squeeze(-1)
-            tmp = self.linear(tmp)
-            data.append(tmp)
-        data = torch.stack(data,1).mean(1)
-        data = torch.sigmoid(data)
-
-        '''
-        target_imgs = torch.split(target_imgs, 1, 1)
-        data = []
-        for target_img in target_imgs:
-            tmp = torch.cat([target_img, text], 1)
-            tmp = self.unet(tmp, style)
-            tmp = self.dnet(tmp).squeeze(-1).squeeze(-1)
-            tmp = self.linear(tmp)
-            data.append(tmp)
-        data = torch.stack(data,1)
-        data = torch.sigmoid(data)
-        '''
+    def forward(self, imgs, style):
+        bs, tot, w, h = imgs.shape
+        style = style.unsqueeze(1).expand(bs, tot, -1).reshape(bs*tot, 128)
+        data = torch.reshape(imgs, (bs*tot, 1, w, h))
+        data = self.unet(data, style)
+        data = self.dnet(data)
+        data = self.linear(data)
+        data = torch.reshape(data, (bs, tot))
+        data = F.tanh(data)*.5+.5
         return data
 
 class GModel(nn.Module):
     def __init__(self):
         super(GModel,self).__init__()
-        self.style_encoder = StyleEncoder(1)
         self.unet = UnetGenerator(
                 input_nc = 1,
-                output_nc = 1,
+                output_nc = 10,
                 use_style = True,
                 num_downs = 6
                 )
-        self.style_mem = nn.GRU(512,256,2,batch_first=True,bidirectional=True)
-        self.final = UnetGenerator(
-                input_nc = 10,
-                output_nc = 1,
-                use_style = False,
-                num_downs = 6
-                )
 
-    def forward(self, content_imgs, style_imgs):
-        style_imgs = torch.split(style_imgs, 1, 1)
-        data = []
-        for style_img in style_imgs:
-            data.append(self.style_encoder(style_img))
-        data = torch.stack(data,1).squeeze(-1).squeeze(-1)
-        '''
-        Simply use mean() to reduce data 
-        data = data.mean(1)
-        '''
-        data = self.style_mem(data)[0].mean(1)
-        style = data
-        content_imgs = torch.split(content_imgs, 1, 1)
-        data = []
-        for content_img in content_imgs:
-            data.append(self.unet(content_img, style))
-        data = torch.stack(data,1).squeeze(2)
-        data = self.final(data, None)*.5+.5
+    def forward(self, imgs, style):
+        bs, tot, w, h = imgs.shape
+        style = style.unsqueeze(1).expand(bs, tot, -1).reshape(bs*tot, 128)
+        data = torch.reshape(imgs, (bs*tot, 1, w, h))
+        data = self.unet(data, style).sum(1)
+        data = torch.reshape(data, (bs, tot, w, h))
+        data = F.tanh(data)*.5+.5
         return data
-
 
 # Defines the Unet generator.
 # |num_downs|: number of downsamplings in UNet. For example,
 # if |num_downs| == 7, image of size 128x128 will become of size 1x1
 # at the bottleneck
 class UnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64,
+    def __init__(self, input_nc, output_nc, num_downs, ngf=16,
                     use_style = False,
                  norm_layer=nn.InstanceNorm2d, use_dropout=False):
         super(UnetGenerator, self).__init__()
@@ -283,20 +260,20 @@ class UnetSkipConnectionBlock(nn.Module):
 class StyleEncoder(nn.Module):
     def __init__(self, in_channels):
         super(StyleEncoder, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=5, stride=1, padding=2, bias=False)
-        self.bn1 = nn.InstanceNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = nn.InstanceNorm2d(128)
-        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn3 = nn.InstanceNorm2d(256)
-        self.conv4 = nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn4 = nn.InstanceNorm2d(512)
-        self.conv5 = nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn5 = nn.InstanceNorm2d(512)
-        self.conv6 = nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn6 = nn.InstanceNorm2d(512)
-        self.conv7 = nn.Conv2d(512, 512, kernel_size=2, stride=2, padding=0, bias=False)
-        self.bn7 = nn.InstanceNorm2d(512)
+        self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=5, stride=1, padding=2, bias=False)
+        self.bn1 = nn.InstanceNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn2 = nn.InstanceNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn3 = nn.InstanceNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn4 = nn.InstanceNorm2d(128)
+        self.conv5 = nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn5 = nn.InstanceNorm2d(128)
+        self.conv6 = nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn6 = nn.InstanceNorm2d(128)
+        self.conv7 = nn.Conv2d(128, 128, kernel_size=2, stride=2, padding=0, bias=False)
+        self.bn7 = nn.InstanceNorm2d(128)
         self.weight_init()
 
     def weight_init(self):
@@ -314,7 +291,7 @@ class StyleEncoder(nn.Module):
         x = F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn5(self.conv5(x)), negative_slope=0.2)
         x = F.leaky_relu(self.bn6(self.conv6(x)), negative_slope=0.2)
-        output = self.conv7(x)
+        output = self.conv7(x).squeeze(-1).squeeze(-1)
         return output
 
 def init_weights(net, init_type='normal', gain=0.02):

@@ -1,4 +1,4 @@
-from data import SimpleDataset
+from data import PairedDataset
 from model import SmartModel
 from simple_model import SimpleModel
 import argparse
@@ -17,14 +17,14 @@ parser.add_argument('--dataset', type=str, default='./dataset/image_100x100x64x6
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=10)
-parser.add_argument('--learn_rate', type=float, default=5*1e-4)
+parser.add_argument('--learn_rate', type=float, default=1e-4)
 parser.add_argument('--pool_size', type=int, default=500)
 parser.add_argument('--use_lsgan', type=bool, default=False)
 parser.add_argument('--rec_freq', type=int, default=100)
 parser.add_argument('--disp_freq', type=int, default=5)
 args = parser.parse_args()
 
-dataset = SimpleDataset()
+dataset = PairedDataset()
 dataset.initialize(args)
 data_loader = torch.utils.data.DataLoader(
         dataset = dataset,
@@ -39,27 +39,24 @@ model = model.cuda()
 
 rec = []
 for epoch in range(2000):
-    for i,(content_imgs, style_imgs, target) in enumerate(data_loader):
-        content_imgs = content_imgs.cuda()
-        style_imgs = style_imgs.cuda()
-        target = target.cuda()
-        model.set_input(content_imgs, style_imgs, target)
+    for i,(imgs_A, imgs_B) in enumerate(data_loader):
+        imgs_A = imgs_A.cuda()
+        imgs_B = imgs_B.cuda()
+        model.set_input(imgs_A, imgs_B)
         model.optimize_parameters()
-        pred = model.fake_img
+        _loss_D, _loss_G = None, None
 
-        if i%args.rec_freq == 0:
-            _pred = pred[0].cpu().detach().numpy()
-            rec.append(_pred)
-            vis.images(np.array(rec), win=10)
         if i%args.disp_freq == 0:
-            _pred = pred[0].cpu().detach().numpy()
-            _targ = target[0].cpu().detach().numpy()
-            _contents = content_imgs[0].unsqueeze(1).cpu().detach().numpy()
-            _styles = style_imgs[0].unsqueeze(1).cpu().detach().numpy()
-            _compare = np.concatenate([_contents, np.broadcast_to(_pred, _contents.shape), np.zeros_like(_contents)], axis=1)
-            vis.image(_targ, win=1)
-            vis.image(_pred, win=2)
-            vis.images(_contents, win=3)
-            vis.images(_styles, win=4)
-            vis.images(_compare, win=5)
-            print("D=",model.loss_D_fake, model.loss_D_real,"G=", model.loss_G)
+            _real_A = model.real_A[0].unsqueeze(1).cpu().detach().numpy()
+            _real_B = model.real_B[0].unsqueeze(1).cpu().detach().numpy()
+            _fake_A = model.fake_A[0].unsqueeze(1).cpu().detach().numpy()
+            _fake_B = model.fake_B[0].unsqueeze(1).cpu().detach().numpy()
+            if hasattr(model, 'loss_D'):
+                _loss_D = model.loss_D.cpu().detach().numpy()
+            if hasattr(model, 'loss_G'):
+                _loss_G = model.loss_G.cpu().detach().numpy()
+            vis.images(_real_A, win=1)
+            vis.images(_real_B, win=2)
+            vis.images(_fake_A, win=3)
+            vis.images(_fake_B, win=4)
+            print("D=",_loss_D,"G=", _loss_G)
