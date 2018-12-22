@@ -1,5 +1,5 @@
 from data import PairedDataset,CrossDataset
-from model import SmartModel, CrossModel
+from model import CrossModel
 import argparse
 import logging
 import torch
@@ -39,15 +39,15 @@ data_loader = torch.utils.data.DataLoader(
 
 model = CrossModel()
 model.initialize(args)
-model = model.cuda()
+model = model
 
 
 rec = []
 for epoch in range(2000):
     for i,(texts, styles, target) in enumerate(data_loader):
-        texts = texts.cuda()*2-1
-        styles = styles.cuda()*2-1
-        target = target.cuda()*2-1
+        texts = texts*2-1
+        styles = styles*2-1
+        target = target*2-1
         model.set_input(texts, styles, target)
         model.optimize_parameters()
         _loss_D, _loss_G = None, None

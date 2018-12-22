@@ -115,5 +115,5 @@ class DModel(nn.Module):
         target = target.view(bs,1,W*H).expand(bs,tot*tot,W*H)
         ts = torch.stack((target, texts, styles), 3)
         ts = ts.view(bs*tot*tot,3,W,H)
-        ts = self.encoder(ts).view(bs, tot*tot, 1)
+        ts = self.encoder(ts).view(bs, tot*tot, 1)*.5+.5
         return ts
