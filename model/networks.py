@@ -1,31 +1,27 @@
-import torch
-import torch.nn as nn
+from .unet import Unet
+from .conv_encoder import ConvEncoder
+from .resnet import Resnet
+from .resnet_encoder import ResnetEncoder
+from .alexnet_encoder import AlexnetEncoder
 from torch.nn import init
 
-class SimpleModel(nn.Module):
-    def __init__(self):
-        super(SimpleModel,self).__init__()
-        use_bias = True
-        self.downconv_1 = nn.Conv2d(1, 8, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
-        self.downconv_2 = nn.Conv2d(8, 16, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
+def create_transformer(name, *args, **kwargs):
+    if name == 'unet':
+        model = Unet(*args, **kwargs)
+    elif name == 'resnet':
+        model = Resnet(*args, **kwargs)
+    init_net(model)
+    return model
 
-        self.upconv_2 = nn.ConvTranspose2d(16, 8, kernel_size=4, stride=2, padding=1, bias=use_bias)
-        self.upconv_1 = nn.ConvTranspose2d(16,1,kernel_size=4, stride=2, padding=1, bias=use_bias)
-
-        self.tanh = nn.Tanh()
-        init_weights(self)
-
-    def forward(self, content_imgs, style_imgs):
-        content_imgs = torch.split(content_imgs, 1, 1)
-        level_0 = content_imgs[-1];
-        level_1 = self.downconv_1(level_0)
-        level_2 = self.downconv_2(level_1)
-        level_1 = torch.cat([level_1, self.upconv_2(level_2)] , 1)
-        data = self.upconv_1(level_1)
-        data = self.tanh(data)*.5+.5
-        return data.squeeze(1)
+def create_encoder(name, *args, **kwargs):
+    if name == 'conv_encoder':
+        model = ConvEncoder(*args, **kwargs)
+    elif name == 'resnet_encoder':
+        model = ResnetEncoder(*args, **kwargs)
+    elif name == 'alexnet_encoder':
+        model = AlexnetEncoder(*args, **kwargs)
+    init_net(model)
+    return model
 
 def init_weights(net, init_type='normal', gain=0.02):
     def init_func(m):
@@ -51,7 +47,7 @@ def init_weights(net, init_type='normal', gain=0.02):
     net.apply(init_func)
 
 
-def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
+def init_net(net, init_type='xavier', init_gain=0.02, gpu_ids=[]):
     if len(gpu_ids) > 0:
         assert(torch.cuda.is_available())
         net.to(gpu_ids[0])
