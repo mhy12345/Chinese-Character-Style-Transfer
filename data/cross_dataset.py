@@ -3,7 +3,7 @@ import random
 import numpy as np
 logger = logging.getLogger(__name__)
 
-class SimpleDataset:
+class CrossDataset:
     def name(self):
         return 'simple-data-loader'
 

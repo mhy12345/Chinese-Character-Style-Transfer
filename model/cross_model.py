@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .networks import create_transformer, create_encoder, init_net
+from .networks import create_transformer, create_encoder, init_net,GANLoss
 
 class CrossModel(nn.Module):
     def __init__(self):
@@ -15,10 +15,10 @@ class CrossModel(nn.Module):
 
         self.criterionGAN = GANLoss(opt.use_lsgan)
         self.optimizer_G = torch.optim.Adam(
-                itertools.chain(self.netG.parameters(), self.netS_D.parameters()),
+                self.netG.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
         self.optimizer_D = torch.optim.Adam(
-                itertools.chain(self.netD.parameters(), self.netS_D.parameters()),
+                self.netD.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
 
         init_net(self)
@@ -29,7 +29,7 @@ class CrossModel(nn.Module):
         self.real_img = target
 
     def forward(self):
-        self.fake_img = self.netG(texts, styles)
+        self.fake_img = self.netG(self.texts, self.styles)
 
     def backward_D(self):
         fake_all = self.fake_img
@@ -73,50 +73,47 @@ class CrossModel(nn.Module):
 class GModel(nn.Module):
     def __init__(self):
         super(GModel, self).__init__()
-        self.trans = create_transformer(
-                opt.transfrom_model,
+
+    def initialize(self, opt):
+        self.transnet = create_transformer(
+                opt.transform_model,
                 in_channels = 2,
                 out_channels = 1,
                 extra_channels = 0,
-                n_blocks = 4
+                n_blocks = 2
                 )
-
-    def initialize(self, opt):
         pass
 
     def forward(self, texts, styles):
         bs, tot, W, H = texts.shape
-        #bs,tot,tot,W*H
-        #bs,tot,tot,W*H
-        texts = text.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
+        texts = texts.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
         styles = styles.view(bs,tot,W*H,1).expand(-1,-1,-1,tot)
         styles = torch.transpose(styles,-1,-2)
         ts = torch.stack((texts, styles), 3)
-        ts = ts.view(bs*tot*tot,1,W,H)
+        ts = ts.view(bs*tot*tot,2,W,H)
         ts = self.transnet(ts, None).view(bs, tot*tot, W, H).sum(1)
         return ts
 
 class DModel(nn.Module):
     def __init__(self):
         super(DModel, self).__init__()
+
+    def initialize(self, opt):
         self.encoder = create_encoder(
-                opt.transfrom_model,
+                opt.encoder_model,
                 in_channels = 3,
                 out_channels = 1
                 )
 
-    def initialize(self, opt):
-        pass
-
-    def forward(self, texts, styles, target):
+    def forward(self, target, texts, styles):
         bs, tot, W, H = texts.shape
-        #bs,tot,tot,W*H
-        #bs,tot,tot,W*H
-        texts = text.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
+        texts = texts.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
         styles = styles.view(bs,tot,W*H,1).expand(-1,-1,-1,tot)
         styles = torch.transpose(styles,-1,-2)
+        texts = texts.contiguous().view(bs,tot*tot,W*H)
+        styles = styles.contiguous().view(bs,tot*tot,W*H)
         target = target.view(bs,1,W*H).expand(bs,tot*tot,W*H)
-        ts = torch.stack((targets, texts, styles), 3)
-        ts = ts.view(bs*tot*tot,1,W,H)
-        ts = self.encoder(ts, None).view(bs, tot*tot, W, H).sum(1)
+        ts = torch.stack((target, texts, styles), 3)
+        ts = ts.view(bs*tot*tot,3,W,H)
+        ts = self.encoder(ts).view(bs, tot*tot, 1)
         return ts
