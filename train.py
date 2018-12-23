@@ -16,8 +16,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='./dataset/image_100x100x64x64_stand.npy')
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
-parser.add_argument('--batch_size', type=int, default=10)
-parser.add_argument('--learn_rate', type=float, default=2*1e-4)
+parser.add_argument('--batch_size', type=int, default=5)
+parser.add_argument('--learn_rate', type=float, default=1e-4)
 parser.add_argument('--pool_size', type=int, default=500)
 parser.add_argument('--use_lsgan', type=bool, default=False)
 parser.add_argument('--rec_freq', type=int, default=100)
@@ -39,26 +39,32 @@ data_loader = torch.utils.data.DataLoader(
 
 model = CrossModel()
 model.initialize(args)
-model = model
+model = model.cuda()
 
 
 rec = []
 for epoch in range(2000):
+    l = len(data_loader)
     for i,(texts, styles, target) in enumerate(data_loader):
-        texts = texts*2-1
-        styles = styles*2-1
-        target = target*2-1
+        texts = texts.cuda()*2-1
+        styles = styles.cuda()*2-1
+        target = target.cuda()*2-1
         model.set_input(texts, styles, target)
         model.optimize_parameters()
         _loss_D, _loss_G = None, None
 
         if i%args.disp_freq == 0:
-            _real_img = model.real_A[0].unsqueeze(1).cpu().detach().numpy()*.5+.5
-            _fake_img = model.fake_A[0].unsqueeze(1).cpu().detach().numpy()*.5+.5
+            _real_img = model.real_img[0].cpu().detach().numpy()*.5+.5
+            _fake_img = model.fake_img[0].cpu().detach().numpy()*.5+.5
             _loss_D = model.loss_D.cpu().detach().numpy()
             _loss_G = model.loss_G.cpu().detach().numpy()
             vis.images(_real_img, win=1)
-            vis.images(_real_B, win=2)
             vis.images(_fake_img, win=3)
-            vis.images(_fake_B, win=4)
             print("D=",_loss_D,"G=", _loss_G)
+            idx = l*epoch+i
+            print(idx)
+            loss_win = vis.line(
+                    Y = np.array([[_loss_G,_loss_D]]), 
+                    X = np.array([idx]), 
+                    win = 7 if idx == 0 else loss_win, 
+                    update='append' if idx != 0 else None)

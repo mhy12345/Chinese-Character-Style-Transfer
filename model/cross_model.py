@@ -80,19 +80,37 @@ class GModel(nn.Module):
                 in_channels = 2,
                 out_channels = 1,
                 extra_channels = 0,
-                n_blocks = 2
+                n_blocks = 8
+                )
+        self.transnet_2 = create_transformer(
+                opt.transform_model,
+                in_channels = 30,
+                out_channels = 1,
+                extra_channels = 0,
+                n_blocks = 6
                 )
         pass
 
     def forward(self, texts, styles):
         bs, tot, W, H = texts.shape
+        ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
+        ts = self.transnet(ts, None).view(bs, tot, W, H)
+        ts = torch.cat([ts, texts, styles], 1)
+        ts = self.transnet_2(ts, None).view(bs, W, H)
+        return ts
+        '''
+        bs, tot, W, H = texts.shape
         texts = texts.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
         styles = styles.view(bs,tot,W*H,1).expand(-1,-1,-1,tot)
         styles = torch.transpose(styles,-1,-2)
-        ts = torch.stack((texts, styles), 3)
+        texts = texts.contiguous().view(bs,tot*tot,W*H)
+        styles = styles.contiguous().view(bs,tot*tot,W*H)
+        ts = torch.stack((texts, styles), 2)
         ts = ts.view(bs*tot*tot,2,W,H)
-        ts = self.transnet(ts, None).view(bs, tot*tot, W, H).sum(1)
+        ts = self.transnet(ts, None).view(bs, tot*tot, W, H)
+        ts = self.transnet_2(ts, None).view(bs, W, H)
         return ts
+        '''
 
 class DModel(nn.Module):
     def __init__(self):
@@ -102,18 +120,27 @@ class DModel(nn.Module):
         self.encoder = create_encoder(
                 opt.encoder_model,
                 in_channels = 3,
-                out_channels = 1
+                out_channels = 1,
+                n_blocks = 4
                 )
 
     def forward(self, target, texts, styles):
         bs, tot, W, H = texts.shape
-        texts = texts.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
-        styles = styles.view(bs,tot,W*H,1).expand(-1,-1,-1,tot)
-        styles = torch.transpose(styles,-1,-2)
-        texts = texts.contiguous().view(bs,tot*tot,W*H)
-        styles = styles.contiguous().view(bs,tot*tot,W*H)
-        target = target.view(bs,1,W*H).expand(bs,tot*tot,W*H)
-        ts = torch.stack((target, texts, styles), 3)
-        ts = ts.view(bs*tot*tot,3,W,H)
-        ts = self.encoder(ts).view(bs, tot*tot, 1)*.5+.5
+        target = target.view(bs,1,W,H).expand(bs,tot,W,H)
+        ts = torch.stack((target, texts, styles), 2).view(bs*tot,3,W,H)
+        ts = self.encoder(ts).view(bs, tot, 1).mean(2)*.5+.5
         return ts
+    '''
+        bs, tot, W, H = texts.shape
+        ddd = 1
+        texts = texts.view(bs,tot,1,W*H).expand(-1,-1,ddd,-1)
+        styles = styles.view(bs,tot,W*H,1).expand(-1,-1,-1,ddd)
+        styles = torch.transpose(styles,-1,-2)
+        texts = texts.contiguous().view(bs,tot*ddd,W*H)
+        styles = styles.contiguous().view(bs,tot*ddd,W*H)
+        target = target.view(bs,1,W*H).expand(bs,tot*ddd,W*H)
+        ts = torch.stack((target, texts, styles), 3)
+        ts = ts.view(bs*tot*ddd,3,W,H)
+        ts = self.encoder(ts).view(bs, tot, ddd, 1).mean(2)*.5+.5
+        return ts
+        '''
