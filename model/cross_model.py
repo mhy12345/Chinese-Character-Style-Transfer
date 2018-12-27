@@ -3,6 +3,10 @@ import os
 import torch.nn as nn
 import torch.nn.functional as F
 from .networks import create_im2im, create_im2vec, init_net,GANLoss
+import visdom
+vis = visdom.Visdom(env='model')
+import random
+import numpy as np
 
 class CrossModel(nn.Module):
     def __init__(self):
@@ -89,30 +93,58 @@ class CrossModel(nn.Module):
 class GModel(nn.Module):
     def __init__(self):
         super(GModel, self).__init__()
+        self.fastForward = True
 
     def initialize(self, opt):
+        self.style_channels = opt.style_channels
+        self.stylenet = create_im2vec(
+                opt.im2vec_model,
+                in_channels = 10,
+                out_channels = self.style_channels,
+                )
         self.transnet = create_im2im(
                 opt.transform_model,
-                in_channels = 2,
+                in_channels = 1,
                 out_channels = 1,
-                extra_channels = 0,
+                extra_channels = self.style_channels,
                 n_blocks = 8
                 )
         self.transnet_2 = create_im2im(
                 opt.transform_model,
-                in_channels = 30,
+                in_channels = 20,
                 out_channels = 1,
-                extra_channels = 0,
+                extra_channels = self.style_channels,
                 n_blocks = 6
                 )
         pass
 
     def forward(self, texts, styles):
         bs, tot, W, H = texts.shape
-        ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
-        ts = self.transnet(ts, None).view(bs, tot, W, H)
-        ts = torch.cat([ts, texts, styles], 1)
-        ts = self.transnet_2(ts, None).view(bs, W, H)
+        ss = self.stylenet(styles)
+        sss = ss.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, self.style_channels)
+        #ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
+        ts = texts.view(bs*tot,1,W,H)
+        ts = self.transnet(ts, sss).view(bs, tot, W, H)
+        vis.images(ts[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='ts')
+        if self.fastForward:
+            return torch.split(ts, 1, 1)[random.randint(0,9)].squeeze(1)
+        '''
+        mask = [1 for i in range(tot)]
+        mask[random.randint(0,tot-1)] = 0
+        mask = torch.tensor(np.array(mask).astype(np.float32)).cuda().unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand(bs, tot, W, H)
+
+        mask2 = [random.randint(0,1) for i in range(tot)]
+        if (random.randint(0,1) == 0):
+            mask2[0] = 0
+            mask2[5] = 0
+        mask2 = torch.tensor(np.array(mask2).astype(np.float32)).cuda().unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand(bs, tot, W, H)
+        ts = ts  * mask
+        texts = texts * mask2
+        styles = styles * mask2
+        '''
+
+        ts = torch.cat([ts, texts], 1)
+        ts = self.transnet_2(ts, ss).view(bs, W, H)
         return ts
         '''
         bs, tot, W, H = texts.shape

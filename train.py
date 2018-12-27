@@ -49,6 +49,7 @@ try:
     model.load_networks('latest')
     pass
 except RuntimeError:
+    print("Cannot load network!")
     pass
 
 
@@ -93,3 +94,4 @@ for epoch in range(2000):
                     update='append' if idx != 0 else None)
             if idx%args.save_freq == 0:
                 model.save_networks('latest')
+                pass
