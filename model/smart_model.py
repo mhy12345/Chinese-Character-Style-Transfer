@@ -7,7 +7,7 @@ import visdom
 import numpy as np
 vis = visdom.Visdom(env='model')
 
-from .networks import create_transformer, create_encoder, init_net,GANLoss
+from .networks import create_im2im, create_im2vec, init_net,GANLoss
 
 class SmartModel(nn.Module):
     '''
@@ -118,8 +118,8 @@ class SModel(nn.Module):
         super(SModel, self).__init__()
 
     def initialize(self,opt):
-        self.dnet = create_encoder(
-                opt.encoder_model,
+        self.dnet = create_im2vec(
+                opt.im2vec_model,
                 in_channels = 1,
                 out_channels = opt.style_channels
                 )
@@ -138,15 +138,15 @@ class DModel(nn.Module):
 
     def initialize(self, opt):
         self.style_channels = opt.style_channels
-        self.unet = create_transformer(
+        self.unet = create_im2im(
                 opt.transform_model,
                 in_channels = 1,
                 out_channels = 10,
                 extra_channels = opt.style_channels,
                 n_blocks = 4
                 )
-        self.dnet = create_encoder(
-                opt.encoder_model,
+        self.dnet = create_im2vec(
+                opt.im2vec_model,
                 in_channels = 10,
                 out_channels = opt.style_channels
                 )
@@ -169,7 +169,7 @@ class GModel(nn.Module):
 
     def initialize(self, opt):
         self.style_channels = opt.style_channels
-        self.unet = create_transformer(
+        self.unet = create_im2im(
                 opt.transform_model,
                 in_channels = 1,
                 out_channels = 10,

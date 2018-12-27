@@ -1,13 +1,16 @@
 import torch
+import os
 import torch.nn as nn
 import torch.nn.functional as F
-from .networks import create_transformer, create_encoder, init_net,GANLoss
+from .networks import create_im2im, create_im2vec, init_net,GANLoss
 
 class CrossModel(nn.Module):
     def __init__(self):
         super(CrossModel, self).__init__()
+        self.model_names = 'cross_model'
 
     def initialize(self, opt):
+        self.save_dir = os.path.join(opt.checkpoints_dir, opt.name)
         self.netG = GModel()
         self.netD = DModel()
         self.netG.initialize(opt)
@@ -70,19 +73,32 @@ class CrossModel(nn.Module):
                 for param in net.parameters():
                     param.requires_grad = requires_grad
 
+    def save_networks(self, epoch):
+        name = self.model_names
+        save_filename = '%s_net_%s.pth' % (epoch, name)
+        save_path = os.path.join(self.save_dir, save_filename)
+        model = self
+        torch.save(model.state_dict(), save_path)
+
+    def load_networks(self, epoch):
+        name = self.model_names
+        load_filename = '%s_net_%s.pth' % (epoch, name)
+        load_path = os.path.join(self.save_dir, load_filename)
+        self.load_state_dict(torch.load(load_path))
+
 class GModel(nn.Module):
     def __init__(self):
         super(GModel, self).__init__()
 
     def initialize(self, opt):
-        self.transnet = create_transformer(
+        self.transnet = create_im2im(
                 opt.transform_model,
                 in_channels = 2,
                 out_channels = 1,
                 extra_channels = 0,
                 n_blocks = 8
                 )
-        self.transnet_2 = create_transformer(
+        self.transnet_2 = create_im2im(
                 opt.transform_model,
                 in_channels = 30,
                 out_channels = 1,
@@ -117,8 +133,8 @@ class DModel(nn.Module):
         super(DModel, self).__init__()
 
     def initialize(self, opt):
-        self.encoder = create_encoder(
-                opt.encoder_model,
+        self.im2vec = create_im2vec(
+                opt.im2vec_model,
                 in_channels = 3,
                 out_channels = 1,
                 n_blocks = 4
@@ -128,7 +144,7 @@ class DModel(nn.Module):
         bs, tot, W, H = texts.shape
         target = target.view(bs,1,W,H).expand(bs,tot,W,H)
         ts = torch.stack((target, texts, styles), 2).view(bs*tot,3,W,H)
-        ts = self.encoder(ts).view(bs, tot, 1).mean(2)*.5+.5
+        ts = self.im2vec(ts).view(bs, tot, 1).mean(2)*.5+.5
         return ts
     '''
         bs, tot, W, H = texts.shape
@@ -141,6 +157,6 @@ class DModel(nn.Module):
         target = target.view(bs,1,W*H).expand(bs,tot*ddd,W*H)
         ts = torch.stack((target, texts, styles), 3)
         ts = ts.view(bs*tot*ddd,3,W,H)
-        ts = self.encoder(ts).view(bs, tot, ddd, 1).mean(2)*.5+.5
+        ts = self.im2vec(ts).view(bs, tot, ddd, 1).mean(2)*.5+.5
         return ts
         '''

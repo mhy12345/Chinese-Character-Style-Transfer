@@ -1,29 +1,26 @@
-from .unet import Unet
-from .conv_encoder import ConvEncoder
-from .resnet import Resnet
-from .resnet_encoder import ResnetEncoder
-from .alexnet_encoder import AlexnetEncoder
+import importlib
 import torch
 import torch.nn as nn
 from torch.nn import init
 
-def create_transformer(name, *args, **kwargs):
-    if name == 'unet':
-        model = Unet(*args, **kwargs)
-    elif name == 'resnet':
-        model = Resnet(*args, **kwargs)
+def create_model(cls, name, args, kwargs):
+    path = 'model.'+cls+'.'+name
+    modules = importlib.import_module(path)
+    model = getattr(modules, name.capitalize())
+    if model is None:
+        print("There should be a modul named %s\n"%path)
+    model = model(*args, **kwargs)
     init_net(model)
     return model
 
-def create_encoder(name, *args, **kwargs):
-    if name == 'conv_encoder':
-        model = ConvEncoder(*args, **kwargs)
-    elif name == 'resnet_encoder':
-        model = ResnetEncoder(*args, **kwargs)
-    elif name == 'alexnet_encoder':
-        model = AlexnetEncoder(*args, **kwargs)
-    init_net(model)
-    return model
+def create_im2im(name, *args, **kwargs):
+    return create_model('im2im', name, args, kwargs)
+
+def create_im2vec(name, *args, **kwargs):
+    return create_model('im2vec', name, args, kwargs)
+
+def create_vec2im(name, *args, **kwargs):
+    return create_model('vec2im', name, args, kwargs)
 
 def init_weights(net, init_type='normal', gain=0.02):
     def init_func(m):
@@ -49,7 +46,7 @@ def init_weights(net, init_type='normal', gain=0.02):
     net.apply(init_func)
 
 
-def init_net(net, init_type='xavier', init_gain=0.02, gpu_ids=[]):
+def init_net(net, init_type='kaiming', init_gain=0.02, gpu_ids=[]):
     if len(gpu_ids) > 0:
         assert(torch.cuda.is_available())
         net.to(gpu_ids[0])

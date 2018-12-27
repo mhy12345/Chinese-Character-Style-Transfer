@@ -1,4 +1,5 @@
 dataset/
+/checkpoints
 /raw_data
 *.pyc
 .*.swp
