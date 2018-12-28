@@ -18,20 +18,20 @@ class Resnet(nn.Module):
         model = [nn.ReflectionPad2d(3),
                  nn.Conv2d(in_channels, ngf, kernel_size=7, padding=0,
                            bias=use_bias),
-                 norm_layer(ngf),
                  nn.ReLU(True)]
 
         n_downsampling = 3
         for i in range(n_downsampling):
             mult = 2**i
-            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
+            model += [
+                    nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
                                 stride=2, padding=1, bias=use_bias),
-                      norm_layer(ngf * mult * 2),
-                      nn.ReLU(True)]
+                    norm_layer(ngf * mult * 2),
+                    nn.ReLU(True),
+                    ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+                      ]
 
         mult = 2**n_downsampling
-        for i in range(n_blocks):
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         model += [nn.ReflectionPad2d(3)]
         for i in range(n_downsampling):
@@ -39,7 +39,8 @@ class Resnet(nn.Module):
             model += [
                     nn.Conv2d(ngf * mult * 2, ngf * mult, kernel_size=3, stride=2, padding=1, bias=use_bias),
                     norm_layer(ngf * mult),
-                    nn.ReLU(True)
+                    nn.ReLU(True),
+                    ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=None, use_dropout=use_dropout, use_bias=use_bias)
                     ]
 
         model += [nn.Conv2d(ngf * mult, out_channels, kernel_size=3, stride=2, padding=1, bias=use_bias)]
@@ -69,9 +70,10 @@ class ResnetBlock(nn.Module):
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
 
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-                       norm_layer(dim),
-                       nn.ReLU(True)]
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias)]
+        if not norm_layer is None:
+            conv_block += [norm_layer(dim)]
+        conv_block += [nn.ReLU(True)]
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
 
@@ -84,8 +86,9 @@ class ResnetBlock(nn.Module):
             p = 1
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-                       norm_layer(dim)]
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias)]
+        if not norm_layer is None:
+            conv_block += [norm_layer(dim)]
 
         return nn.Sequential(*conv_block)
 

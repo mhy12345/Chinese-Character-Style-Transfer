@@ -3,6 +3,7 @@ import os
 import torch.nn as nn
 import torch.nn.functional as F
 from .networks import create_im2im, create_im2vec, init_net,GANLoss
+from utils.image_pool import ImagePool
 import visdom
 vis = visdom.Visdom(env='model')
 import random
@@ -27,23 +28,33 @@ class CrossModel(nn.Module):
         self.optimizer_D = torch.optim.Adam(
                 self.netD.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
+        self.pool = ImagePool(100)
 
         init_net(self)
+        print(self)
 
     def set_input(self, texts, styles, target):
         self.texts = texts
         self.styles = styles
-        self.real_img = target
+        self.real_img = target.unsqueeze(1)
 
     def forward(self):
-        self.fake_img = self.netG(self.texts, self.styles)
+        self.fake_imgs = self.netG(self.texts, self.styles)
 
     def backward_D(self):
-        fake_all = self.fake_img
+        fake_all = self.fake_imgs
         real_all = self.real_img
+        texts = self.texts
+        styles = self.styles
 
-        pred_fake = self.netD(fake_all.detach(), self.texts, self.styles)
-        pred_real = self.netD(real_all.detach(), self.texts, self.styles)
+        img = torch.cat((fake_all,real_all,texts, styles),1)
+        img = self.pool.query(img)
+        fake_all, real_all, texts, styles = torch.split(img,[10,1,10,10],1)
+        fake_all = fake_all.contiguous()
+        real_all = real_all.contiguous()
+
+        pred_fake = self.netD(fake_all.detach(), texts, styles)
+        pred_real = self.netD(real_all.detach(), texts, styles)
 
         self.loss_fake = self.criterionGAN(pred_fake, False)
         self.loss_real = self.criterionGAN(pred_real, True)
@@ -51,13 +62,16 @@ class CrossModel(nn.Module):
         self.loss_D.backward()
 
     def backward_G(self):
-        fake_all = self.fake_img
+        fake_all = self.fake_imgs
         pred_fake = self.netD(fake_all, self.texts, self.styles)
         self.loss_G = self.criterionGAN(pred_fake, True)
         self.loss_G.backward()
 
     def optimize_parameters(self):
         self.forward()
+        vis.images(self.fake_imgs[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='ts')
+        vis.images(self.styles[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='styles')
+        vis.images(self.texts[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='texts')
         self.set_requires_grad(self.netD, True)
         self.optimizer_D.zero_grad()
         self.backward_D()
@@ -101,6 +115,7 @@ class GModel(nn.Module):
                 opt.im2vec_model,
                 in_channels = 10,
                 out_channels = self.style_channels,
+                n_blocks = 6
                 )
         self.transnet = create_im2im(
                 opt.transform_model,
@@ -125,9 +140,9 @@ class GModel(nn.Module):
         #ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
         ts = texts.view(bs*tot,1,W,H)
         ts = self.transnet(ts, sss).view(bs, tot, W, H)
-        vis.images(ts[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='ts')
         if self.fastForward:
-            return torch.split(ts, 1, 1)[random.randint(0,9)].squeeze(1)
+            return ts
+            #return torch.split(ts, 1, 1)[random.randint(0,9)]
         '''
         mask = [1 for i in range(tot)]
         mask[random.randint(0,tot-1)] = 0
@@ -172,11 +187,14 @@ class DModel(nn.Module):
                 n_blocks = 4
                 )
 
-    def forward(self, target, texts, styles):
+    def forward(self, targets, texts, styles):
         bs, tot, W, H = texts.shape
-        target = target.view(bs,1,W,H).expand(bs,tot,W,H)
-        ts = torch.stack((target, texts, styles), 2).view(bs*tot,3,W,H)
-        ts = self.im2vec(ts).view(bs, tot, 1).mean(2)*.5+.5
+        _, tot_t, W, H = targets.shape
+        targets = targets.view(bs*tot_t,1,W,H).expand(bs*tot_t,tot,W,H)
+        texts = texts.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
+        styles = styles.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
+        ts = torch.stack((targets, texts, styles), 2).view(bs*tot_t*tot,3,W,H)
+        ts = self.im2vec(ts).view(bs, tot_t, tot).mean(2)*.5+.5
         return ts
     '''
         bs, tot, W, H = texts.shape

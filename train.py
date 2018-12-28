@@ -16,14 +16,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='./dataset/image_2939x200x64x64_stand.npy')
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
-parser.add_argument('--batch_size', type=int, default=5)
+parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--learn_rate', type=float, default=1e-4)
 parser.add_argument('--pool_size', type=int, default=500)
 parser.add_argument('--use_lsgan', type=bool, default=False)
 parser.add_argument('--rec_freq', type=int, default=100)
-parser.add_argument('--disp_freq', type=int, default=50)
+parser.add_argument('--disp_freq', type=int, default=10)
 parser.add_argument('--save_freq', type=int, default=50)
-parser.add_argument('--style_channels', type=int, default=256)
+parser.add_argument('--style_channels', type=int, default=32)
 
 parser.add_argument('--im2vec_model', type=str, default='resnet')
 parser.add_argument('--im2im_model', type=str, default='resnet')
@@ -46,7 +46,8 @@ model = CrossModel()
 model.initialize(args)
 model = model.cuda()
 try:
-    model.load_networks('latest')
+    model.load_networks('latest_3')
+    print("Model loaded...")
     pass
 except RuntimeError:
     print("Cannot load network!")
@@ -67,18 +68,18 @@ for epoch in range(2000):
 
         if i%args.disp_freq == 0:
             _real_img = model.real_img[0].cpu().detach().numpy()*.5+.5
-            _fake_img = model.fake_img[0].cpu().detach().numpy()*.5+.5
+            _fake_img = model.fake_imgs[0][0].cpu().detach().numpy()*.5+.5
             _loss_D = model.loss_D.cpu().detach().numpy()
             _loss_G = model.loss_G.cpu().detach().numpy()
             _texts = model.texts[0].unsqueeze(1).cpu().detach().numpy()*.5+.5
             _styles = model.styles[0].unsqueeze(1).cpu().detach().numpy()*.5+.5
             _texts_cmp = torch.cat(
                     (model.texts[0].unsqueeze(1), 
-                        model.fake_img[0].unsqueeze(0).unsqueeze(0).expand(10, 2, -1, -1))
+                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(10, 2, -1, -1))
                     , 1).cpu().detach().numpy()*.5+.5
             _styles_cmp = torch.cat(
                     (model.styles[0].unsqueeze(1), 
-                        model.fake_img[0].unsqueeze(0).unsqueeze(0).expand(10, 2, -1, -1))
+                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(10, 2, -1, -1))
                     , 1).cpu().detach().numpy()*.5+.5
             vis.images(_real_img, win='real_img')
             vis.images(_fake_img, win='fake_img')
@@ -93,5 +94,5 @@ for epoch in range(2000):
                     win = 7 if idx == 0 else loss_win, 
                     update='append' if idx != 0 else None)
             if idx%args.save_freq == 0:
-                model.save_networks('latest')
+                model.save_networks('latest_3')
                 pass

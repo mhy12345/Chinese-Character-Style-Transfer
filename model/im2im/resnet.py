@@ -21,42 +21,80 @@ class Resnet(nn.Module):
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
-        model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(in_channels+extra_channels, ngf, kernel_size=7, padding=0,
-                           bias=use_bias),
-                 norm_layer(ngf),
-                 nn.ReLU(True)]
+        models = []
+        models.append(
+                (nn.Sequential(
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(
+                        in_channels+extra_channels, 
+                        ngf, kernel_size=7, padding=0,
+                        bias=use_bias),
+                    norm_layer(ngf),
+                    nn.ReLU(True)
+                    ), True)
+                )
 
         n_downsampling = 2
         for i in range(n_downsampling):
             mult = 2**i
-            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
-                                stride=2, padding=1, bias=use_bias),
-                      norm_layer(ngf * mult * 2),
-                      nn.ReLU(True)]
-
-        mult = 2**n_downsampling
+            models.append(
+                    (nn.Sequential(
+                        nn.Conv2d(
+                            ngf * mult + extra_channels,
+                            ngf * mult * 2, kernel_size=3,
+                            stride=2, padding=1, bias=use_bias
+                            ),
+                        norm_layer(ngf * mult * 2),
+                        nn.ReLU(True)
+                        ), True)
+                    )
+            mult = 2**n_downsampling
         for i in range(n_blocks):
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+            models.append(
+                    (
+                    ResnetBlock(
+                        ngf * mult, 
+                        padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias),False)
+                    )
+            pass
 
         for i in range(n_downsampling):
             mult = 2**(n_downsampling - i)
-            model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1,
-                                         bias=use_bias),
-                      norm_layer(int(ngf * mult / 2)),
-                      nn.ReLU(True)]
-        model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(ngf, out_channels, kernel_size=7, padding=0)]
-        model += [nn.Tanh()]
+            models.append(
+                    (nn.Sequential(
+                        nn.ConvTranspose2d(ngf * mult + extra_channels, 
+                            int(ngf * mult / 2),
+                            kernel_size=3, stride=2,
+                            padding=1, output_padding=1,
+                            bias=use_bias),
+                        norm_layer(int(ngf * mult / 2)),
+                        nn.ReLU(True)
+                        ), True)
+                    )
+        models.append(
+                (
+                nn.Sequential(
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(ngf, out_channels, kernel_size=7, padding=0),
+                    nn.Tanh()
+                    ),False)
+                )
+        self.models = models
+        for i, (model,tag) in enumerate(self.models):
+            setattr(self, 'model_'+str(i), model)
 
-        self.model = nn.Sequential(*model)
+    def forward(self, data, style):
 
-    def forward(self, input, style):
         if style is not None:
-            input = torch.cat([input, style.unsqueeze(-1).unsqueeze(-1).expand(-1,self.extra_channels,64,64)],1)
-        return self.model(input)
+            bs, tf = style.shape
+            style = style.view(bs, tf, 1, 1)
+
+        for model,tag in self.models:
+            _, _, W, H = data.shape
+            if style is not None and tag:
+                data = torch.cat([data, style.expand(-1, -1, W, H)], 1)
+            data = model(data)
+        return data
 
 
 # Define a resnet block
@@ -78,8 +116,8 @@ class ResnetBlock(nn.Module):
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
 
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-                       norm_layer(dim),
-                       nn.ReLU(True)]
+                norm_layer(dim),
+                nn.ReLU(True)]
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
 
@@ -93,7 +131,7 @@ class ResnetBlock(nn.Module):
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
-                       norm_layer(dim)]
+                norm_layer(dim)]
 
         return nn.Sequential(*conv_block)
 
