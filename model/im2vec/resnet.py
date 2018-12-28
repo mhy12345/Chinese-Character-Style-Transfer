@@ -4,7 +4,7 @@ import math
 
 class Resnet(nn.Module):
     def __init__(self, in_channels, out_channels, 
-            ngf=32, norm_layer=nn.InstanceNorm2d, use_dropout=False, n_blocks=2, padding_type='reflect'):
+            ngf=32, norm_layer=nn.InstanceNorm2d, use_dropout=False, n_blocks=1, padding_type='reflect'):
         assert(n_blocks >= 0)
         super(Resnet, self).__init__()
         self.in_channels = in_channels
@@ -27,8 +27,9 @@ class Resnet(nn.Module):
                     nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
                                 stride=2, padding=1, bias=use_bias),
                     norm_layer(ngf * mult * 2),
-                    nn.ReLU(True),
-                    ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)
+                    nn.ReLU(True)]
+            model += [
+                    ResnetBlock(ngf * mult * 2, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias) for _ in range(n_blocks)
                       ]
 
         mult = 2**n_downsampling
@@ -39,8 +40,10 @@ class Resnet(nn.Module):
             model += [
                     nn.Conv2d(ngf * mult * 2, ngf * mult, kernel_size=3, stride=2, padding=1, bias=use_bias),
                     norm_layer(ngf * mult),
-                    nn.ReLU(True),
-                    ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=None, use_dropout=use_dropout, use_bias=use_bias)
+                    nn.ReLU(True)
+                    ]
+            model += [
+                    ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=None, use_dropout=use_dropout, use_bias=use_bias) for _ in range(n_blocks)
                     ]
 
         model += [nn.Conv2d(ngf * mult, out_channels, kernel_size=3, stride=2, padding=1, bias=use_bias)]

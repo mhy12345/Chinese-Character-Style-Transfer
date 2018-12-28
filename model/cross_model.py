@@ -1,13 +1,19 @@
 import torch
-import os
 import torch.nn as nn
 import torch.nn.functional as F
-from .networks import create_im2im, create_im2vec, init_net,GANLoss
+import os
+from .networks import create_im2im, create_im2vec, create_mixer, init_net,GANLoss
 from utils.image_pool import ImagePool
 import visdom
 vis = visdom.Visdom(env='model')
 import random
 import numpy as np
+
+def shuffle_imgs(texts):
+    texts = list(torch.split(texts, 1, 1))
+    random.shuffle(texts)
+    texts = torch.cat(texts ,1) #Shuffle the texts
+    return texts
 
 class CrossModel(nn.Module):
     def __init__(self):
@@ -28,7 +34,7 @@ class CrossModel(nn.Module):
         self.optimizer_D = torch.optim.Adam(
                 self.netD.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
-        self.pool = ImagePool(100)
+        self.pool = ImagePool(160)
 
         init_net(self)
         print(self)
@@ -49,7 +55,7 @@ class CrossModel(nn.Module):
 
         img = torch.cat((fake_all,real_all,texts, styles),1)
         img = self.pool.query(img)
-        fake_all, real_all, texts, styles = torch.split(img,[10,1,10,10],1)
+        fake_all, real_all, texts, styles = torch.split(img,[16,1,16,16],1)
         fake_all = fake_all.contiguous()
         real_all = real_all.contiguous()
 
@@ -65,6 +71,10 @@ class CrossModel(nn.Module):
         fake_all = self.fake_imgs
         pred_fake = self.netD(fake_all, self.texts, self.styles)
         self.loss_G = self.criterionGAN(pred_fake, True)
+        if hasattr(self.netG, 'score'):
+            pred_basic = torch.softmax(pred_fake,1)
+            self.loss_G += (pred_basic-self.netG.score).abs().mean()
+            vis.bar(torch.stack((pred_basic[0], self.netG.score[0]), 1).cpu().detach().numpy(), win='scores')
         self.loss_G.backward()
 
     def optimize_parameters(self):
@@ -107,15 +117,14 @@ class CrossModel(nn.Module):
 class GModel(nn.Module):
     def __init__(self):
         super(GModel, self).__init__()
-        self.fastForward = True
+        self.fastForward = False
 
     def initialize(self, opt):
         self.style_channels = opt.style_channels
         self.stylenet = create_im2vec(
                 opt.im2vec_model,
-                in_channels = 10,
-                out_channels = self.style_channels,
-                n_blocks = 6
+                in_channels = 1,
+                out_channels = self.style_channels
                 )
         self.transnet = create_im2im(
                 opt.transform_model,
@@ -126,16 +135,51 @@ class GModel(nn.Module):
                 )
         self.transnet_2 = create_im2im(
                 opt.transform_model,
-                in_channels = 20,
+                in_channels = 32,
                 out_channels = 1,
                 extra_channels = self.style_channels,
                 n_blocks = 6
                 )
-        pass
+        self.guessnet = create_im2vec(
+                opt.im2vec_model,
+                in_channels = 4,
+                out_channels = 1
+                )
+        '''
+        self.mixer = create_mixer(
+                'conv',
+                in_channels = 16
+                )
+        '''
+
+    def genFont(self, texts, styles_vec, style_count):
+        texts = texts.unsqueeze(0) #1, tot, W, H
+        bs, tot, W, H = texts.shape
+
+        ss =  styles_vec.unsqueeze(0) #1, sc
+        sss = ss.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, self.style_channels)
+
+        ts = texts.view(bs*tot,1,W,H)
+        ts = self.transnet(ts, sss).view(bs, tot, W, H)
+        basic_preds = ts
+
+        ts = ts.view(bs*tot, 1, W, H)
+        #styles = torch.tensor(np.random.randn(bs*tot, 1, W, H).astype(np.float32)).cuda()
+        #s0 = styles.view(bs*tot, 1, W, H) #Do not use s0 cause we wan't to support style generator
+        t0 = texts.view(bs*tot, 1, W, H)
+        ss = shuffle_imgs(styles).view(bs*tot, 1, W, H)
+        tt = shuffle_imgs(texts).view(bs*tot, 1, W, H)
+        ts = torch.cat([ts, t0, ss, tt], 1)
+        score = self.guessnet(ts).view(bs, tot)
+        score = torch.softmax(score, 1)
+        rank = torch.sort(score, 1, descending=True)[1]
+        self.best_preds = torch.gather(basic_preds, 1, rank.view(bs, tot, 1, 1).expand(bs, tot, W, H))
+        self.score = torch.gather(score, 1, rank)
+        return self.best_preds
 
     def forward(self, texts, styles):
         bs, tot, W, H = texts.shape
-        ss = self.stylenet(styles)
+        ss = self.stylenet(styles.view(bs*tot, 1, W, H)).view(bs, tot, self.style_channels).mean(1)
         sss = ss.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, self.style_channels)
         #ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
         ts = texts.view(bs*tot,1,W,H)
@@ -143,6 +187,7 @@ class GModel(nn.Module):
         if self.fastForward:
             return ts
             #return torch.split(ts, 1, 1)[random.randint(0,9)]
+        self.basic_preds = ts
         '''
         mask = [1 for i in range(tot)]
         mask[random.randint(0,tot-1)] = 0
@@ -157,10 +202,18 @@ class GModel(nn.Module):
         texts = texts * mask2
         styles = styles * mask2
         '''
-
-        ts = torch.cat([ts, texts], 1)
-        ts = self.transnet_2(ts, ss).view(bs, W, H)
-        return ts
+        ts = ts.view(bs*tot, 1, W, H)
+        #s0 = styles.view(bs*tot, 1, W, H)
+        t0 = texts.view(bs*tot, 1, W, H)
+        ss = shuffle_imgs(styles).view(bs*tot, 1, W, H)
+        tt = shuffle_imgs(texts).view(bs*tot, 1, W, H)
+        ts = torch.cat([ts, t0, ss, tt], 1)
+        score = self.guessnet(ts).view(bs, tot)
+        score = torch.softmax(score, 1)
+        rank = torch.sort(score, 1, descending=True)[1]
+        self.best_preds = torch.gather(self.basic_preds, 1, rank.view(bs, tot, 1, 1).expand(bs, tot, W, H))
+        self.score = torch.gather(score, 1, rank)
+        return self.best_preds
         '''
         bs, tot, W, H = texts.shape
         texts = texts.view(bs,tot,1,W*H).expand(-1,-1,tot,-1)
@@ -184,11 +237,12 @@ class DModel(nn.Module):
                 opt.im2vec_model,
                 in_channels = 3,
                 out_channels = 1,
-                n_blocks = 4
+                n_blocks = 1
                 )
 
     def forward(self, targets, texts, styles):
         bs, tot, W, H = texts.shape
+        texts = shuffle_imgs(texts)
         _, tot_t, W, H = targets.shape
         targets = targets.view(bs*tot_t,1,W,H).expand(bs*tot_t,tot,W,H)
         texts = texts.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)

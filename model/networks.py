@@ -22,6 +22,9 @@ def create_im2vec(name, *args, **kwargs):
 def create_vec2im(name, *args, **kwargs):
     return create_model('vec2im', name, args, kwargs)
 
+def create_mixer(name, *args, **kwargs):
+    return create_model('mixer', name, args, kwargs)
+
 def init_weights(net, init_type='normal', gain=0.02):
     def init_func(m):
         classname = m.__class__.__name__
