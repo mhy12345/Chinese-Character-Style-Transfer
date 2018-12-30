@@ -83,11 +83,11 @@ for epoch in range(2000):
             _texts_cmp = torch.cat(
                     (model.texts[0].unsqueeze(1), 
                         model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(16, 2, -1, -1))
-                    , 1).cpu()*.5+.5
+                    , 1).cpu().detach()*.5+.5
             _styles_cmp = torch.cat(
                     (model.styles[0].unsqueeze(1), 
                         model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(16, 2, -1, -1))
-                    , 1).cpu()*.5+.5
+                    , 1).cpu().detach()*.5+.5
             vis.images(_real_img, win='real_img')
             vis.images(_fake_img, win='fake_img')
             vis.images(_texts, win='texts')

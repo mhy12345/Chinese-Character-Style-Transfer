@@ -53,7 +53,7 @@ class CrossModel(nn.Module):
         texts = self.texts
         styles = self.styles
 
-        img = torch.cat((fake_all,real_all,texts, styles),1)
+        img = torch.cat((fake_all,real_all,texts, styles),1).detach()
         img = self.pool.query(img)
         fake_all, real_all, texts, styles = torch.split(img,[16,1,16,16],1)
         fake_all = fake_all.contiguous()
