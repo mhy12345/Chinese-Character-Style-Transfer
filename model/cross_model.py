@@ -55,7 +55,8 @@ class CrossModel(nn.Module):
 
         img = torch.cat((fake_all,real_all,texts, styles),1).detach()
         img = self.pool.query(img)
-        fake_all, real_all, texts, styles = torch.split(img,[16,1,16,16],1)
+        tot = (img.size(1)-1)//3
+        fake_all, real_all, texts, styles = torch.split(img,[tot,1,tot,tot],1)
         fake_all = fake_all.contiguous()
         real_all = real_all.contiguous()
 
@@ -71,11 +72,13 @@ class CrossModel(nn.Module):
         fake_all = self.fake_imgs
         pred_fake = self.netD(fake_all, self.texts, self.styles)
         self.loss_G = self.criterionGAN(pred_fake, True)
+        self.loss_GS = self.loss_G
         if hasattr(self.netG, 'score'):
             pred_basic = torch.softmax(pred_fake,1)
-            self.loss_G += (pred_basic-self.netG.score).abs().mean()
+            self.loss_S = (pred_basic-self.netG.score).abs().mean()
+            self.loss_GS += self.loss_S
             vis.bar(torch.stack((pred_basic[0], self.netG.score[0]), 1).cpu().detach().numpy(), win='scores')
-        self.loss_G.backward()
+        self.loss_GS.backward()
 
     def optimize_parameters(self):
         self.forward()
@@ -124,26 +127,22 @@ class GModel(nn.Module):
         self.stylenet = create_im2vec(
                 opt.im2vec_model,
                 in_channels = 1,
-                out_channels = self.style_channels
+                out_channels = self.style_channels,
+                n_blocks = 2
                 )
+        self.style_dropout = torch.nn.Dropout(0.5)
         self.transnet = create_im2im(
                 opt.transform_model,
                 in_channels = 1,
                 out_channels = 1,
                 extra_channels = self.style_channels,
-                n_blocks = 8
-                )
-        self.transnet_2 = create_im2im(
-                opt.transform_model,
-                in_channels = 32,
-                out_channels = 1,
-                extra_channels = self.style_channels,
-                n_blocks = 6
+                n_blocks = 12
                 )
         self.guessnet = create_im2vec(
                 opt.im2vec_model,
                 in_channels = 4,
-                out_channels = 1
+                out_channels = 1,
+                n_blocks = 1
                 )
         '''
         self.mixer = create_mixer(
@@ -180,6 +179,7 @@ class GModel(nn.Module):
     def forward(self, texts, styles):
         bs, tot, W, H = texts.shape
         ss = self.stylenet(styles.view(bs*tot, 1, W, H)).view(bs, tot, self.style_channels).mean(1)
+        ss = self.style_dropout(ss)
         sss = ss.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, self.style_channels)
         #ts = torch.stack((texts, styles), 2).view(bs*tot,2,W,H)
         ts = texts.view(bs*tot,1,W,H)
