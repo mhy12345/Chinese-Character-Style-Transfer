@@ -1,6 +1,7 @@
 from data import PairedDataset,CrossDataset
 from model import CrossModel
 import argparse
+import random
 import logging
 import torch
 import torch.utils.data
@@ -19,7 +20,7 @@ vis = visdom.Visdom(env='main')
 vis2 = visdom.Visdom(env='exp')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='./dataset/image_2000x150x64x64_test.npy')
+parser.add_argument('--dataset', type=str, default='./dataset/image_2000x150x64x64_train.npy')
 parser.add_argument('--dataset_path', type=str)
 parser.add_argument('--sample_size', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=1)
@@ -51,7 +52,7 @@ data_loader = torch.utils.data.DataLoader(
 model = CrossModel()
 model.initialize(args)
 model = model.cuda()
-model.train()
+model.eval()
 
 vistool = Visualizer(100)
 vistool.register('lossD')
@@ -69,44 +70,23 @@ except FileNotFoundError:
     print("Cannot load network!")
     pass
 
+while True:
+    texts, styles, target = dataset[random.randint(0,len(dataset)-1)]
+    texts, styles, target = torch.tensor(texts).cuda(), torch.tensor(styles).cuda(), torch.tensor(target).cuda()
+    t1 = []
+    t2 = []
+    for i in range(32):
+        t = random.randint(0,1)
+        t1.append(t)
+        t2.append(1-t)
+    t1 = torch.tensor(np.array(t1).astype(np.float32)).cuda()/8
+    t2 = torch.tensor(np.array(t2).astype(np.float32)).cuda()/8
 
-rec = []
-for epoch in range(2000):
-    l = len(data_loader)
-    history = None
-    for i,(texts, styles, target) in enumerate(data_loader):
-        texts = texts.cuda()*2-1
-        styles = styles.cuda()*2-1
-        target = target.cuda()*2-1
-        model.set_input(texts, styles, target)
-        #model.optimize_parameters()
-        model.forward()
-        idx = l*epoch+i
-
-        _real_img = model.real_img[0].cpu().detach()*.5+.5
-        _fake_img = model.fake_imgs[0][0].cpu().detach()*.5+.5
-        _texts = model.texts[0].unsqueeze(1).cpu().detach()*.5+.5
-        _styles = model.styles[0].unsqueeze(1).cpu().detach()*.5+.5
-        _texts_cmp = torch.cat(
-                (model.texts[0].unsqueeze(1), 
-                    model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(args.sample_size, 2, -1, -1))
-                , 1).cpu().detach()*.5+.5
-        _styles_cmp = torch.cat(
-                (model.styles[0].unsqueeze(1), 
-                    model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(args.sample_size, 2, -1, -1))
-                , 1).cpu().detach()*.5+.5
-        vis.images(_real_img, win='real_img')
-        vis.images(_fake_img, win='fake_img')
-        vis.images(_texts, win='texts')
-        vis.images(_styles, win='styles')
-        vis.images(_texts_cmp, win= 'texts_cmp')
-        vis.images(_styles_cmp, win= 'styles_cmp')
-        pair = torch.cat((_real_img, _fake_img.unsqueeze(0)), 0)
-        if history is None:
-            history = pair
-        elif history.shape[0]<80:
-            history = torch.cat((pair, history), 0)
-        else:
-            history = torch.cat((pair, torch.split(history,[78,2],0)[0]), 0)
-        vis.images(history.unsqueeze(1), win='his')
-        vistool.log()
+    r = []
+    for i in range(8):
+        for j in range(8):
+            res = model.netG.genFont(texts, t1*i+t2*j, style_count = 8).detach()
+            r.append(torch.split(res,1,1)[0].squeeze(0))
+    r = torch.cat(r, 0).unsqueeze(1)
+    print(r.shape)
+    vis2.images(r)
