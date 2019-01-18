@@ -10,8 +10,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(filename)s[line:
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-
-
 import visdom
 import numpy as np
 from utils.visualizer import Visualizer

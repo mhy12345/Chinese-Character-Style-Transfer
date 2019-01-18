@@ -1,4 +1,5 @@
 dataset/
+__pycache__/
 /checkpoints
 /raw_data
 *.pyc
