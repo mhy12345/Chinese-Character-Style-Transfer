@@ -15,7 +15,7 @@
 
 ## 工程搭建步骤
 
-* 在根目录新建连接`./dataset`，`./checkpoints/main`
+* 在根目录新建文件夹`./dataset`，`./checkpoints/main`
 * 在根目录新建超链接`./raw_data`，指向原始的数据集
 * 运行`./utils/picture_transform.py`，即可将 `../raw_data/image_2939x200x64x64_stand.npy`加载到`./dataset`目录
 * 运行`./train.py`即可开始训练
