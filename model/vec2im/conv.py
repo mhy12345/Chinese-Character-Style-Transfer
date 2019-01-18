@@ -7,15 +7,29 @@ class Conv(nn.Module):
             in_channels,
             out_channels,
             ngf = 32,
-            norm_layer = nn.InstanceNorm2d
+            norm_layer = nn.InstanceNorm2d,
+            n_blocks = None
             ):
         super(Conv, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         models = []
-        for i in range(6):
+        models = models + [
+                    nn.ConvTranspose2d(
+                        in_channels,
+                        ngf*(2**5),
+                        kernel_size=3, 
+                        stride=2, 
+                        output_padding=1, 
+                        padding=1, 
+                        bias=True),
+                    nn.LeakyReLU(0.2)
+                    ]
+        for i in range(4):
             models = models + [
                         nn.ConvTranspose2d(
-                            min(in_channels, in_channels*16//4**(i)),
-                            min(in_channels, in_channels*16//4**(i+1)), 
+                            ngf*2**(5-i),
+                            ngf*2**(4-i),
                             kernel_size=3, 
                             stride=2, 
                             output_padding=1, 
@@ -23,10 +37,20 @@ class Conv(nn.Module):
                             bias=True),
                         ]
             if i>=2 and i!=5:
-                models += [nn.InstanceNorm2d(in_channels//2**(i+1))]
+                models += [nn.BatchNorm2d( ngf*2**(4-i), ngf*2**(4-i))]
             if i!=5:
                 models += [ nn.LeakyReLU(0.2) ]
-        models += [nn.Tanh()]
+        models = models + [
+                    nn.ConvTranspose2d(
+                        ngf*2,
+                        out_channels,
+                        kernel_size=3, 
+                        stride=2, 
+                        output_padding=1, 
+                        padding=1, 
+                        bias=True),
+                    nn.Tanh(),
+                    ]
         self.model = nn.Sequential(*models)
     
     def forward(self, x):

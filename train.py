@@ -1,5 +1,5 @@
 from data import PairedDataset,CrossDataset
-from model import CrossModel
+from model import CrossModel,CrossModelV
 import argparse
 import logging
 import torch
@@ -21,19 +21,20 @@ vis2 = visdom.Visdom(env='exp')
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='./dataset/image_2000x150x64x64_train.npy')
 parser.add_argument('--dataset_path', type=str)
-parser.add_argument('--sample_size', type=int, default=10)
-parser.add_argument('--batch_size', type=int, default=1)
-parser.add_argument('--learn_rate', type=float, default=1e-4)
+parser.add_argument('--sample_size', type=int, default=8)
+parser.add_argument('--batch_size', type=int, default=4)
+parser.add_argument('--learn_rate', type=float, default=5*1e-5)
 parser.add_argument('--pool_size', type=int, default=500)
 parser.add_argument('--use_lsgan', type=bool, default=False)
 parser.add_argument('--rec_freq', type=int, default=100)
-parser.add_argument('--disp_freq', type=int, default=50)
+parser.add_argument('--disp_freq', type=int, default=20)
 parser.add_argument('--save_freq', type=int, default=500)
 parser.add_argument('--style_channels', type=int, default=32)
+parser.add_argument('--text_channels', type=int, default=128)
 
 parser.add_argument('--im2vec_model', type=str, default='resnet')
 parser.add_argument('--im2im_model', type=str, default='resnet')
-parser.add_argument('--vec2im_model', type=str, default='conv')
+parser.add_argument('--vec2im_model', type=str, default='resnet')
 parser.add_argument('--transform_model', type=str, default='resnet')
 parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints')
 parser.add_argument('--name', type=str, default='./main')
@@ -56,7 +57,7 @@ model.train()
 vistool = Visualizer(100)
 vistool.register('lossD')
 vistool.register('lossG')
-vistool.register('lossS')
+vistool.register('lossE')
 
 try:
     model.load_networks('latest')
@@ -87,8 +88,10 @@ for epoch in range(2000):
         _fake_img = model.fake_imgs[0][0].cpu().detach()*.5+.5
         _loss_D = model.loss_D.cpu().detach()
         _loss_G = model.loss_G.cpu().detach()
+        _loss_E = model.loss_E.cpu().detach()
         vistool.update('lossD',_loss_D)
         vistool.update('lossG',_loss_G)
+        vistool.update('lossE',_loss_E)
         if i%args.disp_freq == 0:
             #_loss_S = model.loss_S.cpu().detach()*50
             _texts = model.texts[0].unsqueeze(1).cpu().detach()*.5+.5
@@ -119,7 +122,9 @@ for epoch in range(2000):
             loss_win = vis.line(
                     Y = np.array([[
                         vistool['lossG'],
-                        vistool['lossD']]]),
+                        vistool['lossD'],
+                        vistool['lossE'],
+                        ]]),
                     X = np.array([idx]),
                     win = 'losswin' if idx == 0 else loss_win, 
                     update='append' if idx != 0 else None)

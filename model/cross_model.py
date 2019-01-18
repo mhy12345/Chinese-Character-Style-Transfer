@@ -76,13 +76,15 @@ class CrossModel(nn.Module):
         fake_all = self.fake_imgs
         pred_fake = self.netD(fake_all, self.texts, self.styles)
         self.loss_G = self.criterionGAN(pred_fake, True)
-        self.loss_GS = self.loss_G
+        self.loss_GSE = self.loss_G
         if hasattr(self.netG, 'score'):
             pred_basic = torch.softmax(pred_fake,1)
             self.loss_S = (pred_basic-self.netG.score).abs().mean()
-            self.loss_GS += self.loss_S
-            vis.bar(torch.stack((pred_basic[0], self.netG.score[0]), 1).cpu().detach().numpy(), win='scores')
-        self.loss_GS.backward()
+            self.loss_GSE += self.loss_S
+            #vis.bar(torch.stack((pred_basic[0], self.netG.score[0]), 1).cpu().detach().numpy(), win='scores')
+        self.loss_E = self.netG.extra_loss
+        self.loss_GSE += self.loss_E
+        self.loss_GSE.backward()
 
     def optimize_parameters(self):
         self.forward()
@@ -183,9 +185,19 @@ class GModel(nn.Module):
         styles_v_ = styles_v.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, self.style_channels)
         data = texts.view(bs*tot,1,W,H)
         data = self.transnet(data, styles_v_).view(bs, tot, W, H)
+
+        basic_preds = data
+        mean_pred = basic_preds.mean(1).unsqueeze(1)
+        if self.fastForward:
+            self.extra_loss = (data-mean_pred).abs().mean()
+            t = (basic_preds-mean_pred)[0].unsqueeze(1)
+            t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
+            vis.images(t, win='data_a')
+
+        self.basic_preds = basic_preds
         if self.fastForward:
             return data
-        self.basic_preds = data
+
         data = data.view(bs*tot, 1, W, H)
         texts_ = texts.view(bs*tot, 1, W, H)
         styles_ = styles.view(bs*tot, 1, W, H)
@@ -197,6 +209,12 @@ class GModel(nn.Module):
         rank = torch.sort(score, 1, descending=True)[1]
         self.best_preds = torch.gather(self.basic_preds, 1, rank.view(bs, tot, 1, 1).expand(bs, tot, W, H))
         self.score = torch.gather(score, 1, rank)
+
+        mean_pred = (self.best_preds * self.score.detach().unsqueeze(-1).unsqueeze(-1).expand(-1,-1,W,H)).sum(1).unsqueeze(1)
+        self.extra_loss = (basic_preds-mean_pred).abs().mean()
+        t = (basic_preds-mean_pred)[0].unsqueeze(1)
+        t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
+        vis.images(t, win='data_a')
         return self.best_preds
         '''
         bs, tot, W, H = texts.shape
@@ -228,12 +246,19 @@ class DModel(nn.Module):
         bs, tot, W, H = texts.shape
         texts = shuffle_channels(texts)
         _, tot_t, W, H = targets.shape
-        targets = targets.view(bs*tot_t,1,W,H).expand(bs*tot_t,tot,W,H)
-        texts = texts.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
-        styles = styles.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
-        data = torch.stack((targets, texts, styles), 2).view(bs*tot_t*tot,3,W,H)
-        data = self.im2vec(data).view(bs, tot_t, tot).mean(2)*.5+.5
-        return data
+        targets_ = targets.view(bs*tot_t,1,W,H).expand(bs*tot_t,tot,W,H)
+        texts_ = texts.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
+        styles_ = styles.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
+        data = torch.stack((targets_, texts_, styles_), 2).view(bs*tot_t*tot,3,W,H)
+        score = self.im2vec(data).view(bs, tot_t, tot).mean(2)*.5+.5
+
+        if tot_t > 1:
+            rank = torch.sort(score, 1, descending=True)[1]
+            self.dis_preds = torch.gather(targets, 1, rank.view(bs, tot_t, 1, 1).expand(bs, tot_t, W, H))
+            self.dis_preds[:,:,0,:] = 1
+            self.dis_preds[:,:,1,:] = 0
+            vis.images(self.dis_preds[0].unsqueeze(1).cpu().detach().numpy()*.5+.5, win='data_d')
+        return score
     '''
         bs, tot, W, H = texts.shape
         ddd = 1
