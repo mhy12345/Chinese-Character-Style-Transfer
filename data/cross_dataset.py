@@ -1,9 +1,10 @@
 import logging
 import random
 import numpy as np
+from .base_dataset import BaseDataset
 logger = logging.getLogger(__name__)
 
-class CrossDataset:
+class CrossDataset(BaseDataset):
     def name(self):
         return 'simple-data-loader'
 
@@ -12,7 +13,7 @@ class CrossDataset:
 
     def initialize(self, opt):
         logger.info('Initialize simple-data-loader...')
-        self.path = opt.dataset
+        self.path = opt.dataroot + '/' + opt.dataset
         self.data = np.load(self.path)
         self.content_size = self.data.shape[0]
         self.style_size = self.data.shape[1]

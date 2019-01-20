@@ -24,20 +24,29 @@ class CrossModel(BaseModel):
         super(CrossModel, self).__init__()
         self.model_names = 'cross_model'
 
+    @staticmethod
+    def modify_commandline_options(parser, is_train = True):
+        if is_train:
+            parser.add_argument('--style_dropout', type=float, default=.5, help='dropout ratio of style feature vector')
+            parser.add_argument('--style_channels', type=int, default=32, help='size of style channels')
+            parser.add_argument('--pool_size', type=int, default=150, help='size of image pool, which is used to prevent model collapse')
+        return parser
+
+
     def initialize(self, opt):
         super(CrossModel, self).initialize(opt)
         self.netG = GModel()
         self.netD = DModel()
         self.netG.initialize(opt)
         self.netD.initialize(opt)
-        self.criterionGAN = GANLoss(opt.use_lsgan)
+        self.criterionGAN = GANLoss(False)
         self.optimizer_G = torch.optim.Adam(
                 self.netG.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
         self.optimizer_D = torch.optim.Adam(
                 self.netD.parameters(),
                 lr=opt.learn_rate, betas=(.5, 0.999))
-        self.pool = ImagePool(160)
+        self.pool = ImagePool(opt.pool_size)
 
         init_net(self)
         print(self)
@@ -111,21 +120,21 @@ class GModel(nn.Module):
     def initialize(self, opt):
         self.style_channels = opt.style_channels
         self.stylenet = create_im2vec(
-                opt.im2vec_model,
+                'resnet',
                 in_channels = 1,
                 out_channels = self.style_channels,
-                n_blocks = 2
+                n_blocks = 4
                 )
-        self.style_dropout = torch.nn.Dropout(0.5)
+        self.style_dropout = torch.nn.Dropout(opt.style_dropout)
         self.transnet = create_im2im(
-                opt.transform_model,
+                'resnet',
                 in_channels = 1,
                 out_channels = 1,
                 extra_channels = self.style_channels,
                 n_blocks = 12
                 )
         self.guessnet = create_im2vec(
-                opt.im2vec_model,
+                'resnet',
                 in_channels = 4,
                 out_channels = 1,
                 n_blocks = 1
@@ -206,7 +215,7 @@ class DModel(nn.Module):
 
     def initialize(self, opt):
         self.im2vec = create_im2vec(
-                opt.im2vec_model,
+                'resnet',
                 in_channels = 3,
                 out_channels = 1,
                 n_blocks = 1

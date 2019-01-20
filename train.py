@@ -1,61 +1,53 @@
 from data import PairedDataset,CrossDataset
-from model import CrossModel,CrossModelV
+from models import CrossModel
 import argparse
 import logging
+import os
 import torch
 import torch.utils.data
 import torch.optim as optim
+import visdom
+from options.train_options import TrainOptions
+import numpy as np
+import vistool
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s') 
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-import visdom
-import numpy as np
-from utils.visualizer import Visualizer
 vis = visdom.Visdom(env='main')
-vis2 = visdom.Visdom(env='exp')
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='./dataset/image_2000x150x64x64_train.npy')
-parser.add_argument('--dataset_path', type=str)
-parser.add_argument('--sample_size', type=int, default=8)
-parser.add_argument('--batch_size', type=int, default=4)
-parser.add_argument('--learn_rate', type=float, default=5*1e-5)
-parser.add_argument('--pool_size', type=int, default=500)
-parser.add_argument('--use_lsgan', type=bool, default=False)
-parser.add_argument('--rec_freq', type=int, default=100)
-parser.add_argument('--disp_freq', type=int, default=20)
-parser.add_argument('--save_freq', type=int, default=500)
-parser.add_argument('--style_channels', type=int, default=32)
-parser.add_argument('--text_channels', type=int, default=128)
-
-parser.add_argument('--im2vec_model', type=str, default='resnet')
-parser.add_argument('--im2im_model', type=str, default='resnet')
-parser.add_argument('--vec2im_model', type=str, default='resnet')
-parser.add_argument('--transform_model', type=str, default='resnet')
-parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints')
-parser.add_argument('--name', type=str, default='./main')
-
-args = parser.parse_args()
+opt = TrainOptions().parse() 
 
 dataset = CrossDataset()
-dataset.initialize(args)
+dataset.initialize(opt)
 data_loader = torch.utils.data.DataLoader(
         dataset = dataset,
-        batch_size = args.batch_size,
+        batch_size = opt.batch_size,
         shuffle=True,
         num_workers = 3)
 
 model = CrossModel()
-model.initialize(args)
+model.initialize(opt)
 model = model.cuda()
 model.train()
 
-vistool = Visualizer(100)
-vistool.register('lossD')
-vistool.register('lossG')
-vistool.register('lossE')
+vistool = vistool.VisTool()
+vistool.register_data('lossD', 'scalar_ma')
+vistool.register_data('lossG', 'scalar_ma')
+vistool.register_data('lossE', 'scalar_ma')
+vistool.register_data('real_img', 'images')
+vistool.register_data('fake_img', 'images')
+vistool.register_data('texts', 'images')
+vistool.register_data('styles', 'images')
+vistool.register_data('texts_cmp', 'images')
+vistool.register_data('styles_cmp', 'images')
+vistool.register_data('history', 'image_gallery')
+vistool.register_window('losses', 'lines', sources=['lossD','lossG','lossE'])
+vistool.register_window('real_img', 'images', source='real_img')
+vistool.register_window('fake_img', 'images', source='fake_img')
+vistool.register_window('texts', 'images', source='texts')
+vistool.register_window('styles', 'images', source='styles')
+vistool.register_window('texts_cmp', 'images', source='texts_cmp')
+vistool.register_window('styles_cmp', 'images', source='styles_cmp')
+vistool.register_window('history', 'images', source='history')
 
 try:
     model.load_networks('latest')
@@ -82,51 +74,29 @@ for epoch in range(2000):
         _loss_D, _loss_G = None, None
         idx = l*epoch+i
 
-        _real_img = model.real_img[0].cpu().detach()*.5+.5
-        _fake_img = model.fake_imgs[0][0].cpu().detach()*.5+.5
-        _loss_D = model.loss_D.cpu().detach()
-        _loss_G = model.loss_G.cpu().detach()
-        _loss_E = model.loss_E.cpu().detach()
-        vistool.update('lossD',_loss_D)
-        vistool.update('lossG',_loss_G)
-        vistool.update('lossE',_loss_E)
-        if i%args.disp_freq == 0:
-            #_loss_S = model.loss_S.cpu().detach()*50
-            _texts = model.texts[0].unsqueeze(1).cpu().detach()*.5+.5
-            _styles = model.styles[0].unsqueeze(1).cpu().detach()*.5+.5
+
+        vistool.update('lossD',model.loss_D)
+        vistool.update('lossG',model.loss_G)
+        vistool.update('lossE',model.loss_E)
+        if i%opt.display_freq == 0:
             _texts_cmp = torch.cat(
                     (model.texts[0].unsqueeze(1), 
-                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(args.sample_size, 2, -1, -1))
+                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(opt.sample_size, 2, -1, -1))
                     , 1).cpu().detach()*.5+.5
             _styles_cmp = torch.cat(
                     (model.styles[0].unsqueeze(1), 
-                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(args.sample_size, 2, -1, -1))
+                        model.fake_imgs[0][0].unsqueeze(0).unsqueeze(0).expand(opt.sample_size, 2, -1, -1))
                     , 1).cpu().detach()*.5+.5
-            vis.images(_real_img, win='real_img')
-            vis.images(_fake_img, win='fake_img')
-            vis.images(_texts, win='texts')
-            vis.images(_styles, win='styles')
-            vis.images(_texts_cmp, win= 'texts_cmp')
-            vis.images(_styles_cmp, win= 'styles_cmp')
-            pair = torch.cat((_real_img, _fake_img.unsqueeze(0)), 0)
-            if history is None:
-                history = pair
-            elif history.shape[0]<80:
-                history = torch.cat((pair, history), 0)
-            else:
-                history = torch.cat((pair, torch.split(history,[78,2],0)[0]), 0)
-            vis.images(history.unsqueeze(1), win='his')
-            vistool.log()
-            loss_win = vis.line(
-                    Y = np.array([[
-                        vistool['lossG'],
-                        vistool['lossD'],
-                        vistool['lossE'],
-                        ]]),
-                    X = np.array([idx]),
-                    win = 'losswin' if idx == 0 else loss_win, 
-                    update='append' if idx != 0 else None)
-            if idx%args.save_freq == 0:
+            vistool.update('texts', model.texts[0].unsqueeze(1)*.5+.5)
+            vistool.update('styles', model.styles[0].unsqueeze(1)*.5+.5)
+            vistool.update('real_img', model.real_img[0]*.5+.5)
+            vistool.update('fake_img', model.fake_imgs[0][0]*.5+.5)
+            vistool.update('texts_cmp',_texts_cmp)
+            vistool.update('styles_cmp',_styles_cmp)
+            vistool.update('history', model.real_img[0]*.5+.5)
+            vistool.update('history', model.fake_imgs[0][0]*.5+.5)
+            vistool.sync()
+            if opt.save_model and idx%opt.save_freq == 0:
                 model.save_networks('latest')
                 model.save_networks('checkpoint_'+str(idx))
                 pass

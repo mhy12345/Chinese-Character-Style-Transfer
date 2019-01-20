@@ -3,8 +3,17 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 
-def create_model(cls, name, args, kwargs):
-    path = 'model.'+cls+'.'+name
+def create_model(name, *args, **kwargs):
+    path = 'models.'+name
+    modules = importlib.import_module(path)
+    model = getattr(modules, name.capitalize())
+    if model is None:
+        print("There should be a modul named %s\n"%path)
+    model = model(*args, **kwargs)
+    return model
+
+def create_layer(cls, name, args, kwargs):
+    path = 'models.'+cls+'.'+name
     modules = importlib.import_module(path)
     model = getattr(modules, name.capitalize())
     if model is None:
@@ -14,16 +23,16 @@ def create_model(cls, name, args, kwargs):
     return model
 
 def create_im2im(name, *args, **kwargs):
-    return create_model('im2im', name, args, kwargs)
+    return create_layer('im2im', name, args, kwargs)
 
 def create_im2vec(name, *args, **kwargs):
-    return create_model('im2vec', name, args, kwargs)
+    return create_layer('im2vec', name, args, kwargs)
 
 def create_vec2im(name, *args, **kwargs):
-    return create_model('vec2im', name, args, kwargs)
+    return create_layer('vec2im', name, args, kwargs)
 
 def create_mixer(name, *args, **kwargs):
-    return create_model('mixer', name, args, kwargs)
+    return create_layer('mixer', name, args, kwargs)
 
 def init_weights(net, init_type='normal', gain=0.02):
     def init_func(m):
