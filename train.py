@@ -6,13 +6,12 @@ import os
 import torch
 import torch.utils.data
 import torch.optim as optim
-import visdom
 from options.train_options import TrainOptions
 import numpy as np
 import vistool
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s') 
+logger = logging.getLogger(__name__)
 
-vis = visdom.Visdom(env='main')
 
 opt = TrainOptions().parse() 
 
@@ -29,7 +28,7 @@ model.initialize(opt)
 model = model.cuda()
 model.train()
 
-vistool = vistool.VisTool()
+vistool = vistool.VisTool(opt.name+'_main')
 vistool.register_data('lossD', 'scalar_ma')
 vistool.register_data('lossG', 'scalar_ma')
 vistool.register_data('lossE', 'scalar_ma')
@@ -49,16 +48,19 @@ vistool.register_window('texts_cmp', 'images', source='texts_cmp')
 vistool.register_window('styles_cmp', 'images', source='styles_cmp')
 vistool.register_window('history', 'images', source='history')
 
-try:
-    model.load_networks('latest')
-    print("Model loaded...")
-    pass
-except RuntimeError:
-    print("Cannot load network!")
-    pass
-except FileNotFoundError:
-    print("Cannot load network!")
-    pass
+if opt.load_model:
+    try:
+        model.load_networks('latest', opt.ignore_pattern)
+        logger.info("Model loaded...")
+        pass
+    except RuntimeError as e:
+        logger.warn("Cannot load network! %s"%str(e))
+        pass
+    except FileNotFoundError:
+        logger.warn("Cannot load network! %s"%str(e))
+        pass
+else:
+    logger.info("Model init...")
 
 
 rec = []
@@ -73,8 +75,6 @@ for epoch in range(2000):
         model.optimize_parameters()
         _loss_D, _loss_G = None, None
         idx = l*epoch+i
-
-
         vistool.update('lossD',model.loss_D)
         vistool.update('lossG',model.loss_G)
         vistool.update('lossE',model.loss_E)

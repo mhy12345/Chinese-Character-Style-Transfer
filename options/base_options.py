@@ -29,8 +29,6 @@ class BaseOptions():
         parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')
         # model parameters
         parser.add_argument('--model', type=str, default='cross', help='chooses which model to use. [cross]')
-        parser.add_argument('--batch_size', type=int, default=2, help='input batch size')
-        parser.add_argument('--epoch', type=str, default='latest', help='which epoch to load? set to latest to use latest cached model')
         parser.add_argument('--name', type=str, default='main', help='name of the experiment. It decides where to store samples and models')
 
         self.initialized = True

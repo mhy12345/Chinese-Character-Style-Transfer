@@ -2,22 +2,31 @@ import importlib
 import torch
 import torch.nn as nn
 from torch.nn import init
+import logging
+logger = logging.getLogger(__name__)
 
 def create_model(name, *args, **kwargs):
     path = 'models.'+name
     modules = importlib.import_module(path)
     model = getattr(modules, name.capitalize())
     if model is None:
-        print("There should be a modul named %s\n"%path)
+        logger.warn("There should be a modul named %s\n"%path)
     model = model(*args, **kwargs)
     return model
 
 def create_layer(cls, name, args, kwargs):
-    path = 'models.'+cls+'.'+name
-    modules = importlib.import_module(path)
-    model = getattr(modules, name.capitalize())
+    model_filename = 'models.'+cls+'.'+name
+    modellib = importlib.import_module(model_filename)
+    model = None
+    target_model_name = name.replace('_', '')
+    for name, cls in modellib.__dict__.items():
+        if name.lower() == target_model_name.lower():
+            model = cls
+
     if model is None:
-        print("There should be a modul named %s\n"%path)
+        print("In %s.py, there should be a subclass of BaseModel with class name that matches %s in lowercase." % (model_filename, target_model_name))
+        exit(0)
+
     model = model(*args, **kwargs)
     init_net(model)
     return model
@@ -54,7 +63,7 @@ def init_weights(net, init_type='normal', gain=0.02):
             init.normal_(m.weight.data, 1.0, gain)
             init.constant_(m.bias.data, 0.0)
 
-    print('initialize network with %s' % init_type)
+    logger.info('initialize network with %s' % init_type)
     net.apply(init_func)
 
 
@@ -90,3 +99,9 @@ class GANLoss(nn.Module):
         target_tensor = self.get_target_tensor(input, target_is_real)
         return self.loss(input, target_tensor)
 
+def shuffle_channels(data, tot):
+    '''
+    将data向量基于dim=1轴向后旋转位移tot位（用于打乱顺序）
+    '''
+    data = torch.cat((data[:,tot:,:], data[:,:tot,:]),1)
+    return data

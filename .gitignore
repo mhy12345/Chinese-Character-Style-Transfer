@@ -4,3 +4,4 @@ __pycache__/
 /raw_data
 *.pyc
 .*.swp
+*.so

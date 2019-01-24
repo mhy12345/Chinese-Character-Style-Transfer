@@ -31,17 +31,30 @@ class CrossDataset(BaseDataset):
         idx2 = idx %  self.style_size
         idxs_1 = []
         idxs_2 = []
-        for i in range(self.sample_size):
-            while True:
-                x = random.randint(0,self.style_size-1)
-                if x != idx2:
-                    break
-            idxs_1.append(x)
-            while True:
-                x = random.randint(0,self.content_size-1)
-                if x != idx1:
-                    break
-            idxs_2.append(x)
+        while True:
+            for i in range(self.sample_size):
+                while True:
+                    x = random.randint(0,self.style_size-1)
+                    if x != idx2:
+                        break
+                idxs_1.append(x)
+                while True:
+                    x = random.randint(0,self.content_size-1)
+                    if x != idx1:
+                        break
+                idxs_2.append(x)
+            flag = False
+            for w in idxs_1:
+                if self.data[idx1,w,:,:].sum() == 0:
+                    flag = True
+            for w in idxs_2:
+                if self.data[w,idx2,:,:].sum() == 0:
+                    flag = True
+            if not flag:
+                break
+            else:
+                logger.info("Filterd...");
+
         return (
                 self.data[idx1,idxs_1,:,:],
                 self.data[idxs_2,idx2,:,:],
