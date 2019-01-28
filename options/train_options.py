@@ -13,7 +13,7 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--epoch', type=str, default='latest', help='which epoch to load? set to latest to use latest cached model')
         parser.add_argument('--learn_rate', type=float, default=1e-4)
         parser.add_argument('--display_freq', type=int, default=20)
-        parser.add_argument('--save_freq', type=int, default=500)
+        parser.add_argument('--save_freq', type=int, default=5000)
         parser.add_argument('--batch_size', type=int, default=1, help='input batch size')
         parser.add_argument('--sample_size', type=int, default=4)
         parser.add_argument('--dataset', type=str, default='image_2000x150x64x64_train.npy')

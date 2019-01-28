@@ -11,8 +11,6 @@ import vistool
 from criterions import find_criterion_using_name
 logger = logging.getLogger(__name__)
 
-
-
 class CrossModel(BaseModel):
     def __init__(self):
         super(CrossModel, self).__init__()
@@ -177,31 +175,28 @@ class GModel(nn.Module):
                 n_blocks = 1
                 )
 
-    def forward(self, texts, styles):
-        bs, tot, W, H = texts.shape
+    def forward_styles(self, styles):
+        bs, tot, W, H = styles.shape
         styles_v = self.stylenet(styles.view(bs*tot, 1, W, H)).view(bs, tot, self.style_channels).mean(1)
         styles_v = self.style_dropout(styles_v)
+        self.styles_v = styles_v.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, 1, self.style_channels)
 
-        styles_v_ = styles_v.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, 1, self.style_channels)
+    def forward_texts(self, texts, styles):
+        bs, tot, W, H = texts.shape
         data = texts.view(bs*tot,1,W,H)
-        data = self.transnet(data, styles_v_).view(bs, tot, W, H)
+        data = self.transnet(data, self.styles_v).view(bs, tot, W, H)
 
         basic_preds = data
+        self.basic_preds = basic_preds
         mean_pred = basic_preds.mean(1).unsqueeze(1)
         if self.fastForward:
             self.extra_loss = (data-mean_pred).abs().mean()
             t = (basic_preds-mean_pred)[0].unsqueeze(1)
             t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
             self.diff_with_average = t
-
-        self.basic_preds = basic_preds
-        if self.fastForward:
-            self.best_preds = self.basic_preds
-            t = (basic_preds-mean_pred)[0].unsqueeze(1)
-            t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
-            self.diff_with_average = t
             self.score = None
-            return data
+            self.best_preds = self.basic_preds
+            return ;
 
         data = data.view(bs*tot, 1, W, H)
         texts_ = texts.view(bs*tot, 1, W, H)
@@ -220,6 +215,16 @@ class GModel(nn.Module):
         t = (basic_preds-mean_pred)[0].unsqueeze(1)
         t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
         self.diff_with_average = t
+
+    def forward(self, texts, styles):
+        self.forward_styles(styles)
+        self.forward_texts(texts, styles)
+        return self.best_preds
+
+    def genFont(self, texts, styles, style_v):
+        self.forward_styles(styles)
+        self.style_v = style_v
+        self.forward_texts(texts, styles)
         return self.best_preds
 
 class DModel(nn.Module):
