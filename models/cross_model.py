@@ -39,15 +39,18 @@ class CrossModel(BaseModel):
         self.vistool.register_data('styles', 'images')
         self.vistool.register_data('texts', 'images')
         self.vistool.register_data('diff_with_average', 'images')
+        self.vistool.register_data('gmodel_sorted', 'images')
         self.vistool.register_data('dmodel_sorted', 'images')
         self.vistool.register_data('scores', 'array')
         self.vistool.register_data('dis_preds_L1_loss', 'scalar_ma')
         self.vistool.register_data('sel_preds_L1_loss', 'scalar_ma')
         self.vistool.register_data('rad_preds_L1_loss', 'scalar_ma')
-        self.vistool.register_window('fake_imgs', 'images', source='fake_imgs')
+        self.vistool.register_data('mod_preds_L1_loss', 'scalar_ma')
+        self.vistool.register_window('dmodel_sorted', 'images', source='dmodel_sorted')
+        self.vistool.register_window('gmodel_sorted', 'images', source='gmodel_sorted')
         if not opt.fast_forward:
             self.vistool.register_window('scores', 'bar', source='scores')
-        self.vistool.register_window('preds_L1_loss', 'lines', sources=['dis_preds_L1_loss', 'sel_preds_L1_loss', 'rad_preds_L1_loss'])
+        self.vistool.register_window('preds_L1_loss', 'lines', sources=['dis_preds_L1_loss', 'sel_preds_L1_loss', 'rad_preds_L1_loss', 'mod_preds_L1_loss'])
 
     def initialize(self, opt):
         super(CrossModel, self).initialize(opt)
@@ -81,7 +84,8 @@ class CrossModel(BaseModel):
         self.real_img = target.unsqueeze(1)
 
     def forward(self):
-        self.fake_imgs = self.netG(self.texts, self.styles)
+        self.netG(self.texts, self.styles)
+        self.fake_imgs = self.netG.basic_preds
 
     def backward_D(self):
         fake_all = self.fake_imgs
@@ -111,11 +115,10 @@ class CrossModel(BaseModel):
         self.loss_G = self.criterionGAN(pred_fake, True) #Gan loss
         self.loss_GSE = self.loss_G
         if not self.fastForward:
-            #pred_result = torch.softmax(pred_fake,1)
             pred_result = pred_fake.detach()
-            self.loss_S = (pred_result-self.netG.score).abs().mean() #Selector loss
+            self.loss_S = (pred_result-self.netG.basic_score).abs().mean() #Selector loss
             self.loss_GSE += self.loss_S
-            self.vistool.update('scores', torch.stack((pred_result[0], self.netG.score[0]), 1))
+            self.vistool.update('scores', torch.stack((pred_result[0], self.netG.basic_score[0]), 1))
         self.loss_E = self.netG.extra_loss # Extra loss
         self.loss_GSE += self.loss_E * self.lambda_E
         self.loss_GSE.backward()
@@ -135,8 +138,15 @@ class CrossModel(BaseModel):
         if self.optm_g:
             self.optimizer_G.step()
 
+        bs, tot, W, H = self.texts.shape
+        score = self.netG.basic_score + self.netD.basic_score*.5
+        rank = torch.sort(score, 1, descending=True)[1]
+        model_preds = torch.gather(self.netG.basic_preds, 1, rank.view(bs, tot, 1, 1).expand(bs, tot, W, H))
+
+        self.vistool.update('gmodel_sorted', self.netG.best_preds[0]*.5+.5)
         self.vistool.update('dmodel_sorted', self.netD.dis_preds[0]*.5+.5)
         self.vistool.update('diff_with_average', self.netG.diff_with_average)
+        self.vistool.update('mod_preds_L1_loss', self.criterionSelector(model_preds[:,0,:,:], self.real_img[:,0,:,:]).mean())
         self.vistool.update('dis_preds_L1_loss', self.criterionSelector(self.netD.dis_preds[:,0,:,:], self.real_img[:,0,:,:]).mean())
         self.vistool.update('sel_preds_L1_loss', self.criterionSelector(self.netG.best_preds[:,0,:,:], self.real_img[:,0,:,:]).mean())
         idx = random.randint(0, self.netG.best_preds.size(1)-1)
@@ -175,29 +185,39 @@ class GModel(nn.Module):
                 n_blocks = 1
                 )
 
-    def forward_styles(self, styles):
+    def forward_styles(self):
+        '''
+        This function encode style images into a feature vector.
+        '''
+        styles = self.styles
         bs, tot, W, H = styles.shape
+
         styles_v = self.stylenet(styles.view(bs*tot, 1, W, H)).view(bs, tot, self.style_channels).mean(1)
         styles_v = self.style_dropout(styles_v)
         self.styles_v = styles_v.view(bs, 1, self.style_channels).expand(-1,tot,-1).contiguous().view(bs*tot, 1, self.style_channels)
 
-    def forward_texts(self, texts, styles):
+    def forward_texts(self):
+        texts = self.texts
+        styles = self.styles
         bs, tot, W, H = texts.shape
+
         data = texts.view(bs*tot,1,W,H)
         data = self.transnet(data, self.styles_v).view(bs, tot, W, H)
 
-        basic_preds = data
-        self.basic_preds = basic_preds
-        mean_pred = basic_preds.mean(1).unsqueeze(1)
-        if self.fastForward:
-            self.extra_loss = (data-mean_pred).abs().mean()
-            t = (basic_preds-mean_pred)[0].unsqueeze(1)
-            t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
-            self.diff_with_average = t
-            self.score = None
-            self.best_preds = self.basic_preds
-            return ;
+        self.basic_preds = data #unsorted predictions
+        self.mean_pred = self.basic_preds.mean(1).unsqueeze(1)
 
+        self.extra_loss = (self.basic_preds-self.mean_pred).abs().mean()
+        diff = (self.basic_preds-self.mean_pred)[0].unsqueeze(1)
+        diff = ((diff - diff.min())/(1e-8 + diff.max() - diff.min())).cpu().detach()
+        self.diff_with_average = diff
+        return 
+
+    def forward_selector(self):
+        data = self.basic_preds
+        texts = self.texts
+        styles = self.styles
+        bs, tot, W, H = texts.shape
         data = data.view(bs*tot, 1, W, H)
         texts_ = texts.view(bs*tot, 1, W, H)
         styles_ = styles.view(bs*tot, 1, W, H)
@@ -205,26 +225,42 @@ class GModel(nn.Module):
         texts_rd = shuffle_channels(texts, 1).view(bs*tot, 1, W, H)
         data = torch.cat([data, texts_, styles_rd, texts_rd], 1)
         score = self.guessnet(data).view(bs, tot) *.5+.5
-        #score = torch.softmax(score, 1)
         rank = torch.sort(score, 1, descending=True)[1]
         self.best_preds = torch.gather(self.basic_preds, 1, rank.view(bs, tot, 1, 1).expand(bs, tot, W, H))
+        self.basic_score = score
         self.score = torch.gather(score, 1, rank)
-
-        mean_pred = (self.best_preds * self.score.detach().unsqueeze(-1).unsqueeze(-1).expand(-1,-1,W,H)).sum(1).unsqueeze(1)
-        self.extra_loss = (basic_preds-mean_pred).abs().mean()
-        t = (basic_preds-mean_pred)[0].unsqueeze(1)
-        t = ((t - t.min())/(1e-8+t.max()-t.min())).cpu().detach()
-        self.diff_with_average = t
+        return
 
     def forward(self, texts, styles):
-        self.forward_styles(styles)
-        self.forward_texts(texts, styles)
+        self.styles = styles
+        self.texts = texts
+        self.forward_styles()
+        self.forward_texts()
+        if self.fastForward:
+            self.score = None
+            self.best_preds = self.basic_preds
+        else:
+            self.forward_selector()
         return self.best_preds
 
     def genFont(self, texts, styles, style_v):
-        self.forward_styles(styles)
+        self.styles = styles
+        self.texts = texts
+        self.forward_styles()
         self.style_v = style_v
-        self.forward_texts(texts, styles)
+        self.forward_texts()
+        self.forward_selector()
+        return self.best_preds
+
+    def checkSelector(self, texts, styles, target):
+        self.styles = styles
+        self.texts = texts
+        self.forward_styles()
+        self.forward_texts()
+        self.styles = torch.cat((self.styles, target.unsqueeze(1)),1)
+        self.texts = torch.cat((self.texts, target.unsqueeze(1)),1)
+        self.basic_preds = torch.cat((self.basic_preds, target.unsqueeze(1)), 1)
+        self.forward_selector()
         return self.best_preds
 
 class DModel(nn.Module):
@@ -249,9 +285,11 @@ class DModel(nn.Module):
         styles_ = styles.view(bs, 1, tot, W, H).expand(bs, tot_t, tot, W, H).contiguous().view(bs*tot_t, tot, W, H)
         data = torch.stack((targets_, texts_, styles_), 2).view(bs*tot_t*tot,3,W,H)
         score = self.im2vec(data).view(bs, tot_t, tot).mean(2)*.5+.5
+        self.basic_score = score
 
         if tot_t > 1:
             rank = torch.sort(score, 1, descending=True)[1]
+            self.dis_score = torch.gather(score, 1, rank)
             self.dis_preds = torch.gather(targets, 1, rank.view(bs, tot_t, 1, 1).expand(bs, tot_t, W, H))
             self.dis_preds[:,:,0,:] = 0 #Draw a line above the character
-        return score
+        return self.basic_score

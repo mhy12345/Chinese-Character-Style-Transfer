@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 opt = TrainOptions().parse() 
 opt.name = 'exp'
-opt.sample_size=20
+opt.sample_size=10
 print(opt)
 
 dataset = CrossDataset()
@@ -66,7 +66,18 @@ for i,(texts, styles, target) in enumerate(data_loader):
     t1 = torch.tensor(np.array(t1).astype(np.float32)).cuda()/8*2
     t2 = torch.tensor(np.array(t2).astype(np.float32)).cuda()/8*2
 
+    bs, tot, W, H = texts.shape
+    model.netG.checkSelector(texts, styles, target)[0]
+    t = model.netG.basic_preds
+    t[:,-1,0,:] = 0
+    score = model.netG.basic_score
+    rank = torch.sort(score, 1, descending=True)[1]
+    t = torch.gather(t, 1, rank.view(bs, opt.sample_size+1, 1, 1).expand(-1, -1, W, H))
+    vistool.update('results', t[0])
+    vistool.sync()
 
+
+    '''
     r = []
     for i in range(8):
         for j in range(8):
@@ -75,3 +86,4 @@ for i,(texts, styles, target) in enumerate(data_loader):
     r = torch.cat(r, 0).unsqueeze(1)
     vistool.update('results', r)
     vistool.sync()
+    '''
