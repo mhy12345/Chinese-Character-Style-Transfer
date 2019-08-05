@@ -1,5 +1,9 @@
 # Chinese-Character-Style-Transfer
 
+## 模型效果
+
+模型效果以及原理参见[SelectorGAN](https://mhy12345.xyz/technology/selector-gan/)
+
 ## 工程结构
 
 * `./raw_data` : 原始数据集
